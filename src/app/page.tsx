@@ -295,6 +295,8 @@ export default function Home() {
           onImagesUpdate={setImages}
           sessionToken={sessionToken}
           zoomCategoryTarget={zoomCategoryTarget}
+          topBarStartDate={startDate}
+          topBarEndDate={endDate}
         />
 
         {isLoading && (

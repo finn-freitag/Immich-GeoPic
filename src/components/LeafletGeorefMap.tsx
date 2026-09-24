@@ -39,6 +39,8 @@ import {
   Crosshair,
   CircleDot,
   BookmarkPlus,
+  Filter,
+  Camera,
 } from "lucide-react";
 import { BaseMap, BaseMapPreset, DEFAULT_BASEMAP, BASEMAP_PRESETS } from "@/types/BaseMap";
 import { VirtualGroup } from "@/types/VirtualGroup";
@@ -46,6 +48,7 @@ import BaseMapModal from "@/components/BaseMapModal";
 import GroupsModal from "@/components/GroupsModal";
 import MixedSelectionDialog from "@/components/MixedSelectionDialog";
 import TrackEditMenu from "@/components/TrackEditMenu";
+import SelectionBuilderModal from "@/components/SelectionBuilderModal";
 
 type Props = {
   images: ImageItem[];
@@ -57,6 +60,8 @@ type Props = {
     category: "all" | "geotagged" | "unreferenced";
     timestamp: number;
   } | null;
+  topBarStartDate?: string;
+  topBarEndDate?: string;
 };
 
 export type MapDisplayItem = ImageItem & {
@@ -363,6 +368,7 @@ interface RectangleDrawerProps {
   bounds: LatLngBounds | null;
   setBounds: (bounds: LatLngBounds | null) => void;
   onMapClick: (e: LeafletMouseEvent) => void;
+  onResetSelectionFilter?: () => void;
 }
 
 function RectangleDrawer({
@@ -374,6 +380,7 @@ function RectangleDrawer({
   bounds,
   setBounds,
   onMapClick,
+  onResetSelectionFilter,
 }: RectangleDrawerProps) {
   const map = useMap();
   const isDrawingRef = useRef(false);
@@ -381,6 +388,9 @@ function RectangleDrawer({
   const drawBoundsRef = useRef<LatLngBounds | null>(null);
   const [drawBounds, setDrawBounds] = useState<LatLngBounds | null>(null);
   const shiftPressed = useRef(false);
+
+  const onResetSelectionFilterRef = useRef(onResetSelectionFilter);
+  onResetSelectionFilterRef.current = onResetSelectionFilter;
 
   const boxSelectModeRef = useRef(boxSelectMode);
   boxSelectModeRef.current = boxSelectMode;
@@ -479,6 +489,7 @@ function RectangleDrawer({
         map.dragging.disable();
         setBoundsRef.current(null);
         setDrawBounds(null);
+        onResetSelectionFilterRef.current?.();
       }
     },
     mousemove(e) {
@@ -498,8 +509,10 @@ function RectangleDrawer({
         if (dist >= 15) {
           const finalBounds = L.latLngBounds(startLatLngRef.current, e.latlng);
           setBoundsRef.current(finalBounds);
+          onResetSelectionFilterRef.current?.();
         } else {
           setBoundsRef.current(null);
+          onResetSelectionFilterRef.current?.();
         }
 
         isDrawingRef.current = false;
@@ -635,6 +648,8 @@ export default function LeafletGeorefMap(props: Props) {
   const [isRelocating, setIsRelocating] = useState(false);
   const [boxSelectMode, setBoxSelectMode] = useState(false);
   const [bounds, setBounds] = useState<LatLngBounds | null>(null);
+  const [selectedPhotoIds, setSelectedPhotoIds] = useState<Set<string> | null>(null);
+  const [showSelectionBuilder, setShowSelectionBuilder] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isImageEnlarged, setIsImageEnlarged] = useState(false);
@@ -758,11 +773,25 @@ export default function LeafletGeorefMap(props: Props) {
     });
   }, [bounds, photoItems]);
 
+  // Actual selected items: if filtered via SelectionBuilder, only those matching selectedPhotoIds;
+  // otherwise (normal rectangle selection), all photos in bounds
+  const selectedItems = useMemo(() => {
+    if (!bounds) return [];
+    if (selectedPhotoIds !== null) {
+      return photoItems.filter((i) => selectedPhotoIds.has(i.id));
+    }
+    return selectedItemsInBounds;
+  }, [bounds, selectedPhotoIds, photoItems, selectedItemsInBounds]);
+
   const estimatedInBounds = useMemo(() => {
-    return selectedItemsInBounds.filter(
+    return selectedItems.filter(
       (i) => !hasValidCoords(i) && i.estimated && i.estCoords
     );
-  }, [selectedItemsInBounds]);
+  }, [selectedItems]);
+
+  const verifiedSelected = useMemo(() => {
+    return selectedItems.filter((i) => hasValidCoords(i));
+  }, [selectedItems]);
 
   // Clear map drag overlay if modal opens
   useEffect(() => {
@@ -1411,6 +1440,7 @@ export default function LeafletGeorefMap(props: Props) {
 
       updateImages(updated);
       setBounds(null);
+      setSelectedPhotoIds(null);
       await loadGpxTracks();
     } catch (err) {
       console.error("Failed to assign photos to group:", err);
@@ -1600,11 +1630,100 @@ export default function LeafletGeorefMap(props: Props) {
 
       updateImages(updated);
       setBounds(null);
+      setSelectedPhotoIds(null);
     } catch (err) {
       console.error("Failed to bulk fix markers:", err);
     } finally {
       setIsUpdating(false);
     }
+  };
+
+  // Remove coordinates for batch of markers inside selection
+  const handleRemoveBatchCoordinates = async () => {
+    if (verifiedSelected.length === 0) return;
+
+    setIsUpdating(true);
+    try {
+      const deleteIds = verifiedSelected.map((img) => img.id);
+      const res = await fetch("/api/images/bulk-location", {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ deleteIds }),
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to remove coordinates: ${res.status}`);
+      }
+
+      const removeSet = new Set(deleteIds);
+      const updated = images.map((img) => {
+        if (removeSet.has(img.id)) {
+          const { estimated, estCoords, ...clean } = img as MapDisplayItem;
+          return {
+            ...clean,
+            coords: undefined,
+            city: undefined,
+            country: undefined,
+            estimated: true,
+          };
+        }
+        return img;
+      });
+
+      updateImages(updated);
+      setBounds(null);
+      setSelectedPhotoIds(null);
+    } catch (err) {
+      console.error("Failed to bulk remove coordinates:", err);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  // Apply filtered selection from SelectionBuilderModal
+  const handleApplySelectionBuilder = (matchingIds: string[]) => {
+    if (matchingIds.length === 0) return;
+
+    const idSet = new Set(matchingIds);
+    const selectedPhotos = photoItems.filter((p) => idSet.has(p.id));
+
+    let minLat = Infinity, maxLat = -Infinity;
+    let minLng = Infinity, maxLng = -Infinity;
+    let validCount = 0;
+
+    for (const p of selectedPhotos) {
+      const c = p.coords || p.estCoords;
+      if (
+        c &&
+        typeof c.lat === "number" &&
+        typeof c.lng === "number" &&
+        !Number.isNaN(c.lat) &&
+        !Number.isNaN(c.lng)
+      ) {
+        minLat = Math.min(minLat, c.lat);
+        maxLat = Math.max(maxLat, c.lat);
+        minLng = Math.min(minLng, c.lng);
+        maxLng = Math.max(maxLng, c.lng);
+        validCount++;
+      }
+    }
+
+    if (validCount > 0) {
+      if (minLat === maxLat && minLng === maxLng) {
+        const delta = 0.0005;
+        minLat -= delta;
+        maxLat += delta;
+        minLng -= delta;
+        maxLng += delta;
+      }
+      const newBounds = L.latLngBounds([minLat, minLng], [maxLat, maxLng]);
+      setBounds(newBounds);
+      setSelectedPhotoIds(idSet);
+      setFlyToBoundsTarget(newBounds);
+    } else {
+      setSelectedPhotoIds(idSet);
+    }
+
+    setShowSelectionBuilder(false);
   };
 
   const hasAutoFittedRef = useRef(false);
@@ -1727,6 +1846,13 @@ export default function LeafletGeorefMap(props: Props) {
         >
           <BoxSelect size={18} />
         </button>
+        <button
+          className={`${styles.mapControlBtn} ${showSelectionBuilder ? styles.active : ""}`}
+          title="Build a Selection (Filter by Camera, Time, Status)"
+          onClick={() => setShowSelectionBuilder(true)}
+        >
+          <Filter size={18} />
+        </button>
         <input
           type="file"
           ref={gpxFileInputRef}
@@ -1806,9 +1932,25 @@ export default function LeafletGeorefMap(props: Props) {
           <div className={styles.selectionText}>
             <BoxSelect size={16} />
             <span>
-              {selectedItemsInBounds.length} photos ({estimatedInBounds.length} estimated)
+              {selectedItems.length} photos ({estimatedInBounds.length} estimated{verifiedSelected.length > 0 ? `, ${verifiedSelected.length} verified` : ""})
             </span>
+            {selectedPhotoIds !== null && (
+              <span className={styles.filteredBadge} title="Filtered selection active">
+                Filtered ({selectedItems.length}/{selectedItemsInBounds.length})
+              </span>
+            )}
           </div>
+
+          {/* Refine / Build Selection Button */}
+          <button
+            className={`${styles.toolBtn} ${styles.filter}`}
+            onClick={() => setShowSelectionBuilder(true)}
+            title="Refine selection with metadata & timespan filters"
+          >
+            <Filter size={14} />
+            <span>Refine Selection</span>
+          </button>
+
           {estimatedInBounds.length > 0 && (
             <button
               className={`${styles.toolBtn} ${styles.fix}`}
@@ -1820,8 +1962,20 @@ export default function LeafletGeorefMap(props: Props) {
             </button>
           )}
 
+          {verifiedSelected.length > 0 && (
+            <button
+              className={`${styles.toolBtn} ${styles.danger}`}
+              onClick={handleRemoveBatchCoordinates}
+              disabled={isUpdating}
+              title={`Remove coordinates from ${verifiedSelected.length} photos`}
+            >
+              <Trash2 size={14} />
+              <span>Remove Coordinates ({verifiedSelected.length})</span>
+            </button>
+          )}
+
           {/* Quick Groups assignment for multi-selection */}
-          {groups.length > 0 && selectedItemsInBounds.length > 0 && (
+          {groups.length > 0 && selectedItems.length > 0 && (
             <div className={styles.selectionGroups}>
               <span className={styles.selectionGroupsLabel}>Group:</span>
               {groups.map((g) => (
@@ -1830,9 +1984,9 @@ export default function LeafletGeorefMap(props: Props) {
                   className={`${styles.selectionGroupChip} ${
                     g.directFix ? styles.directFix : styles.estimated
                   }`}
-                  onClick={() => handleAssignBatchToGroup(selectedItemsInBounds, g)}
+                  onClick={() => handleAssignBatchToGroup(selectedItems, g)}
                   disabled={isUpdating}
-                  title={`Move ${selectedItemsInBounds.length} photos to ${g.name} (${
+                  title={`Move ${selectedItems.length} photos to ${g.name} (${
                     g.radius > 0 ? "Area" : "Marker"
                   } - ${g.directFix ? "Direct Fix" : "Estimated"})`}
                 >
@@ -1845,7 +1999,10 @@ export default function LeafletGeorefMap(props: Props) {
 
           <button
             className={`${styles.toolBtn} ${styles.clear}`}
-            onClick={() => setBounds(null)}
+            onClick={() => {
+              setBounds(null);
+              setSelectedPhotoIds(null);
+            }}
           >
             Clear
           </button>
@@ -1956,19 +2113,28 @@ export default function LeafletGeorefMap(props: Props) {
           }
 
           const isSelected = selectedImage?.id === it.id;
+          const isBatchSelected = bounds
+            ? (selectedPhotoIds !== null
+                ? selectedPhotoIds.has(it.id)
+                : bounds.contains([lat, lng]))
+            : false;
+          const isInBoundsNotSelected =
+            bounds && selectedPhotoIds !== null && !isBatchSelected && bounds.contains([lat, lng]);
+
           const color = isVerified ? "#10b981" : "#f59e0b";
 
           return (
             <CircleMarker
               key={it.id}
               center={[lat, lng]}
-              radius={isSelected ? 10 : 7}
+              radius={isSelected ? 10 : (isBatchSelected ? 8 : 7)}
               interactive={!isRelocating}
               pathOptions={{
-                color: isSelected ? "#4250af" : color,
+                color: isSelected ? "#4250af" : (isBatchSelected ? "#2563eb" : color),
                 fillColor: color,
-                fillOpacity: 0.85,
-                weight: isSelected ? 3 : 2,
+                fillOpacity: isInBoundsNotSelected ? 0.35 : (isBatchSelected ? 0.95 : 0.85),
+                opacity: isInBoundsNotSelected ? 0.4 : 1,
+                weight: isSelected || isBatchSelected ? 3 : 2,
               }}
               eventHandlers={{
                 click: () => {
@@ -2001,6 +2167,7 @@ export default function LeafletGeorefMap(props: Props) {
           bounds={bounds}
           setBounds={setBounds}
           onMapClick={handleMapClick}
+          onResetSelectionFilter={() => setSelectedPhotoIds(null)}
         />
         <CameraController
           trigger={fitTrigger}
@@ -2111,6 +2278,12 @@ export default function LeafletGeorefMap(props: Props) {
                 <span className={styles.metaValue}>
                   {[selectedImage.city, selectedImage.country].filter(Boolean).join(", ")}
                 </span>
+              </div>
+            )}
+            {selectedImage.camera && (
+              <div className={styles.metaRow}>
+                <Camera size={14} />
+                <span className={styles.metaValue}>{selectedImage.camera}</span>
               </div>
             )}
           </div>
@@ -2265,6 +2438,17 @@ export default function LeafletGeorefMap(props: Props) {
             estimatedCount: 0,
           });
         }}
+      />
+
+      {/* Build a Selection Modal */}
+      <SelectionBuilderModal
+        isOpen={showSelectionBuilder}
+        onClose={() => setShowSelectionBuilder(false)}
+        onApply={handleApplySelectionBuilder}
+        images={photoItems}
+        initialBounds={bounds}
+        topBarStartDate={props.topBarStartDate}
+        topBarEndDate={props.topBarEndDate}
       />
 
       {/* Large Image Lightbox Modal */}

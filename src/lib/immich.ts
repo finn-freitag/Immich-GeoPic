@@ -24,6 +24,8 @@ export type ImmichAsset = {
     city?: string | null;
     country?: string | null;
     timeZone?: string | null;
+    make?: string | null;
+    model?: string | null;
   } | null;
 };
 

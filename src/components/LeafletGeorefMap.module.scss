@@ -359,6 +359,30 @@
     }
   }
 
+  &.danger {
+    background-color: var(--danger-light);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: var(--danger);
+
+    &:hover {
+      background-color: var(--danger);
+      border-color: var(--danger);
+      color: #ffffff;
+    }
+  }
+
+  &.filter {
+    background-color: var(--primary-light);
+    border-color: rgba(66, 80, 175, 0.4);
+    color: var(--primary);
+
+    &:hover {
+      background-color: var(--primary);
+      border-color: var(--primary);
+      color: #ffffff;
+    }
+  }
+
   &.clear {
     color: var(--text-secondary);
 
@@ -367,6 +391,19 @@
       color: var(--text-primary);
     }
   }
+}
+
+.filteredBadge {
+  font-size: 11px;
+  font-weight: 700;
+  background-color: var(--primary-light);
+  border: 1px solid rgba(66, 80, 175, 0.25);
+  color: var(--primary);
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 /* Groups Quick Select in Photo Inspector */

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { bulkUpdateLocations } from "@/lib/immich";
 import { resolveAuth } from "@/lib/session";
-import { removeClearedLocation } from "@/lib/clearedStorage";
+import { addClearedLocation, removeClearedLocation } from "@/lib/clearedStorage";
+import { removePhotosFromInternalGpx } from "@/lib/internalGpx";
 
 export async function POST(req: NextRequest) {
   try {
@@ -11,7 +12,17 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { updates } = body;
+    const { updates, deleteIds } = body;
+
+    // Bulk remove coordinates
+    if (Array.isArray(deleteIds) && deleteIds.length > 0) {
+      await addClearedLocation(ctx.user?.id, deleteIds);
+      await removePhotosFromInternalGpx(ctx.user?.id, deleteIds);
+      return NextResponse.json({
+        success: true,
+        removed: deleteIds.length,
+      });
+    }
 
     if (!Array.isArray(updates) || updates.length === 0) {
       return NextResponse.json({ error: "No updates provided" }, { status: 400 });

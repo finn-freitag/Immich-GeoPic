@@ -12,4 +12,7 @@ export type ImageItem = {
     thumbUrl?: string;
     timeZone?: string | null;
     localDateTime?: string | null;
+    camera?: string | null;
+    cameraMake?: string | null;
+    cameraModel?: string | null;
 };

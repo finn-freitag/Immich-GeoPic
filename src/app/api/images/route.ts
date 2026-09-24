@@ -58,6 +58,19 @@ export async function GET(req: NextRequest) {
         }
       }
 
+      const make = asset.exifInfo?.make?.trim() || "";
+      const model = asset.exifInfo?.model?.trim() || "";
+      let camera = "";
+      if (make && model) {
+        if (model.toLowerCase().includes(make.toLowerCase())) {
+          camera = model;
+        } else {
+          camera = `${make} ${model}`;
+        }
+      } else {
+        camera = model || make || "";
+      }
+
       return {
         id: asset.id,
         name: asset.originalFileName || "Untitled",
@@ -68,6 +81,9 @@ export async function GET(req: NextRequest) {
         thumbUrl: `/api/images/${asset.id}/thumbnail`,
         timeZone: asset.exifInfo?.timeZone || undefined,
         localDateTime: asset.localDateTime || asset.exifInfo?.dateTimeOriginal || undefined,
+        camera: camera || undefined,
+        cameraMake: make || undefined,
+        cameraModel: model || undefined,
       };
     });
 
