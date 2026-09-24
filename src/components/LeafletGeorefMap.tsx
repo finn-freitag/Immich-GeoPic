@@ -54,6 +54,7 @@ import MixedSelectionDialog from "@/components/MixedSelectionDialog";
 import TrackEditMenu from "@/components/TrackEditMenu";
 import SelectionBuilderModal from "@/components/SelectionBuilderModal";
 import TimestampModal from "@/components/TimestampModal";
+import SelectionGallery from "@/components/SelectionGallery";
 
 type Props = {
   images: ImageItem[];
@@ -2102,6 +2103,34 @@ export default function LeafletGeorefMap(props: Props) {
     }
   };
 
+  // Remove an individual photo from selection via gallery cross button
+  const handleRemovePhotoFromSelection = (photoId: string) => {
+    let nextSet: Set<string>;
+    if (selectedPhotoIds !== null) {
+      nextSet = new Set(selectedPhotoIds);
+    } else if (bounds) {
+      nextSet = new Set(selectedItemsInBounds.map((i) => i.id));
+    } else {
+      nextSet = new Set();
+    }
+
+    nextSet.delete(photoId);
+
+    if (nextSet.size === 0) {
+      setBounds(null);
+      setSelectedPhotoIds(null);
+      if (selectedImage?.id === photoId) {
+        setSelectedImage(null);
+      }
+      return;
+    }
+
+    setSelectedPhotoIds(nextSet);
+    if (selectedImage?.id === photoId) {
+      setSelectedImage(null);
+    }
+  };
+
   // Handle timestamp updates applied from TimestampModal
   const handleTimestampsUpdated = (updates: Array<{ id: string; timestamp: string }>) => {
     const updateMap = new Map<string, string>();
@@ -2253,7 +2282,11 @@ export default function LeafletGeorefMap(props: Props) {
 
       {/* Relocation banner */}
       {isRelocating && (
-        <div className={styles.relocateBanner}>
+        <div
+          className={`${styles.relocateBanner} ${
+            bounds && selectedItems.length > 0 ? styles.withGallery : ""
+          }`}
+        >
           <Compass size={18} className="animate-pulse" />
           <span>Click anywhere on the map to set the new GPS coordinates</span>
           <button
@@ -2267,7 +2300,11 @@ export default function LeafletGeorefMap(props: Props) {
 
       {/* Pick Group Position Banner */}
       {isPickingGroupPos && (
-        <div className={styles.relocateBanner}>
+        <div
+          className={`${styles.relocateBanner} ${
+            bounds && selectedItems.length > 0 ? styles.withGallery : ""
+          }`}
+        >
           <Crosshair size={18} className="animate-pulse" />
           <span>Click anywhere on the map to set the group position</span>
           <button
@@ -2284,7 +2321,11 @@ export default function LeafletGeorefMap(props: Props) {
 
       {/* Batch Move to Point Banner */}
       {batchMoveMode === "point" && (
-        <div className={styles.relocateBanner}>
+        <div
+          className={`${styles.relocateBanner} ${
+            bounds && selectedItems.length > 0 ? styles.withGallery : ""
+          }`}
+        >
           <MapPin size={18} className="animate-pulse" />
           <span>Click anywhere on the map to move all {selectedItems.length} photos to that position</span>
           <button
@@ -2298,7 +2339,11 @@ export default function LeafletGeorefMap(props: Props) {
 
       {/* Batch Move Relative (Blueprint) Banner */}
       {batchMoveMode === "relative" && (
-        <div className={`${styles.relocateBanner} ${styles.blueprintBanner}`}>
+        <div
+          className={`${styles.relocateBanner} ${styles.blueprintBanner} ${
+            bounds && selectedItems.length > 0 ? styles.withGallery : ""
+          }`}
+        >
           <Move size={18} className="animate-pulse" />
           <span>Move cursor on map to position blueprint. Click to place all {selectedItems.length} photos.</span>
           <button
@@ -2738,6 +2783,23 @@ export default function LeafletGeorefMap(props: Props) {
         />
         <MapCenterTracker onCenterChange={setCurrentMapCenter} />
       </MapContainer>
+
+      {/* Selection Photo Gallery */}
+      {bounds && selectedItems.length > 0 && (
+        <SelectionGallery
+          photos={selectedItems}
+          selectedPhotoId={selectedImage?.id ?? null}
+          onSelectPhoto={(photo) => setSelectedImage(photo)}
+          onRemovePhoto={handleRemovePhotoFromSelection}
+          onClearSelection={() => {
+            setBatchMoveMode(null);
+            setBounds(null);
+            setSelectedPhotoIds(null);
+          }}
+          sessionToken={props.sessionToken}
+          isInspectorOpen={!!selectedImage}
+        />
+      )}
 
       {/* Photo Inspector Panel */}
       {selectedImage && (

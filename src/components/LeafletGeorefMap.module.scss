@@ -24,19 +24,23 @@
   cursor: crosshair !important;
 }
 
-/* Allow controls, cards, and banners to maintain their normal cursor and interactivity */
+/* Allow controls, cards, banners, and gallery to maintain their normal cursor and interactivity */
 .relocateActive :global(.leaflet-control-container),
 .relocateActive :global(.leaflet-control-container *),
 .relocateBanner,
 .relocateBanner *,
 .inspectorCard,
-.inspectorCard * {
+.inspectorCard *,
+.relocateActive :global(.selectionGallery),
+.relocateActive :global(.selectionGallery *) {
   cursor: auto;
 }
 
 .relocateBanner .cancelBtn,
 .inspectorCard button,
-.inspectorCard button * {
+.inspectorCard button *,
+.relocateActive :global(.selectionGallery) button,
+.relocateActive :global(.selectionGallery) button * {
   cursor: pointer !important;
 }
 
@@ -73,6 +77,10 @@
   font-weight: 600;
   z-index: 1000;
   animation: slideDown 0.2s ease-out;
+
+  &.withGallery {
+    top: 124px;
+  }
 
   .cancelBtn {
     background: transparent;
