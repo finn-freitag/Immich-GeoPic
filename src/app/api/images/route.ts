@@ -50,12 +50,16 @@ export async function GET(req: NextRequest) {
 
       let coords: { lat: number; lng: number } | undefined;
       const isCleared = clearedSet.has(asset.id);
-      if (!isCleared) {
-        const lat = asset.exifInfo?.latitude;
-        const lng = asset.exifInfo?.longitude;
-        if (lat != null && lng != null && !Number.isNaN(Number(lat)) && !Number.isNaN(Number(lng))) {
-          coords = { lat: Number(lat), lng: Number(lng) };
-        }
+      const rawLat = asset.exifInfo?.latitude;
+      const rawLng = asset.exifInfo?.longitude;
+      const hasImmichCoords =
+        rawLat != null &&
+        rawLng != null &&
+        !Number.isNaN(Number(rawLat)) &&
+        !Number.isNaN(Number(rawLng));
+
+      if (!isCleared && hasImmichCoords) {
+        coords = { lat: Number(rawLat), lng: Number(rawLng) };
       }
 
       const make = asset.exifInfo?.make?.trim() || "";
@@ -76,6 +80,8 @@ export async function GET(req: NextRequest) {
         name: asset.originalFileName || "Untitled",
         timestamp,
         coords,
+        isCleared: Boolean(isCleared && hasImmichCoords),
+        hasImmichCoords: Boolean(hasImmichCoords),
         city: isCleared ? undefined : (asset.exifInfo?.city || undefined),
         country: isCleared ? undefined : (asset.exifInfo?.country || undefined),
         thumbUrl: `/api/images/${asset.id}/thumbnail`,

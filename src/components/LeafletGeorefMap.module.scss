@@ -232,6 +232,11 @@
     background-color: var(--warning);
     color: #ffffff;
   }
+
+  &.removed {
+    background-color: var(--danger);
+    color: #ffffff;
+  }
 }
 
 .cardBody {
@@ -353,14 +358,13 @@
   background-color: var(--surface);
   border: 1px solid var(--surface-border);
   box-shadow: var(--shadow-lg);
-  border-radius: var(--radius-full);
-  padding: 6px 14px;
+  border-radius: var(--radius-lg);
+  padding: 8px 14px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  max-width: calc(100vw - 32px);
-  overflow-x: auto;
-  white-space: nowrap;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: min(920px, calc(100vw - 32px));
   z-index: 1000;
   animation: slideUp 0.2s ease-out;
 
@@ -380,6 +384,14 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
+}
+
+.selectionTools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .toolBtn {
@@ -394,6 +406,7 @@
   align-items: center;
   gap: 6px;
   transition: all 0.15s ease;
+  white-space: nowrap;
 
   &.fix {
     background-color: var(--success);

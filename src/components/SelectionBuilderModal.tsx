@@ -9,6 +9,7 @@ import {
   Calendar,
   CheckCircle2,
   AlertCircle,
+  XCircle,
   MapPin,
   Check,
   Search,
@@ -121,16 +122,24 @@ export default function SelectionBuilderModal({
     return images;
   }, [images, initialBounds, limitToPreviousBounds, photosInInitialBounds]);
 
-  // 2. Status Checkboxes (Verified / Estimated)
+  // 2. Status Checkboxes (Verified / Estimated / Removed)
   const [includeVerified, setIncludeVerified] = useState(true);
   const [includeEstimated, setIncludeEstimated] = useState(true);
+  const [includeRemoved, setIncludeRemoved] = useState(true);
 
   // Count available in candidate pool
   const verifiedInPool = useMemo(
     () => eligiblePhotos.filter((p) => hasValidCoords(p)).length,
     [eligiblePhotos]
   );
-  const estimatedInPool = eligiblePhotos.length - verifiedInPool;
+  const removedInPool = useMemo(
+    () => eligiblePhotos.filter((p) => !hasValidCoords(p) && p.isCleared).length,
+    [eligiblePhotos]
+  );
+  const estimatedInPool = useMemo(
+    () => eligiblePhotos.filter((p) => !hasValidCoords(p) && !p.isCleared).length,
+    [eligiblePhotos]
+  );
 
   // 3. Timespan range boundaries [barMinMs, barMaxMs]
   const { barMinMs, barMaxMs } = useMemo(() => {
@@ -248,8 +257,12 @@ export default function SelectionBuilderModal({
     return eligiblePhotos.filter((img) => {
       // Status filter
       const isVerified = hasValidCoords(img);
+      const isRemoved = !isVerified && !!img.isCleared;
+      const isPureEstimated = !isVerified && !img.isCleared;
+
       if (isVerified && !includeVerified) return false;
-      if (!isVerified && !includeEstimated) return false;
+      if (isRemoved && !includeRemoved) return false;
+      if (isPureEstimated && !includeEstimated) return false;
 
       // Timespan filter
       const t = new Date(img.timestamp).getTime();
@@ -267,6 +280,7 @@ export default function SelectionBuilderModal({
     eligiblePhotos,
     includeVerified,
     includeEstimated,
+    includeRemoved,
     sliderStart,
     sliderEnd,
     selectedCameras,
@@ -276,7 +290,14 @@ export default function SelectionBuilderModal({
     () => matchingPhotos.filter((p) => hasValidCoords(p)).length,
     [matchingPhotos]
   );
-  const estimatedMatching = matchingPhotos.length - verifiedMatching;
+  const removedMatching = useMemo(
+    () => matchingPhotos.filter((p) => !hasValidCoords(p) && p.isCleared).length,
+    [matchingPhotos]
+  );
+  const estimatedMatching = useMemo(
+    () => matchingPhotos.filter((p) => !hasValidCoords(p) && !p.isCleared).length,
+    [matchingPhotos]
+  );
 
   // Keydown ESC to close
   useEffect(() => {
@@ -436,6 +457,29 @@ export default function SelectionBuilderModal({
                 </div>
                 <span className={`${styles.statusBadge} ${styles.estimated}`}>
                   {estimatedInPool} photos
+                </span>
+              </div>
+
+              {/* Removed Checkbox */}
+              <div
+                className={`${styles.statusCard} ${includeRemoved ? styles.active : ""}`}
+                onClick={() => setIncludeRemoved((prev) => !prev)}
+              >
+                <div className={styles.statusCardLeft}>
+                  <input
+                    type="checkbox"
+                    className={styles.statusCheckbox}
+                    checked={includeRemoved}
+                    onChange={(e) => setIncludeRemoved(e.target.checked)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  <span className={styles.statusLabel}>
+                    <XCircle size={14} color="var(--danger)" />
+                    Removed GPS
+                  </span>
+                </div>
+                <span className={`${styles.statusBadge} ${styles.removed}`}>
+                  {removedInPool} photos
                 </span>
               </div>
             </div>
@@ -622,7 +666,7 @@ export default function SelectionBuilderModal({
               {matchingPhotos.length} photos selected
             </span>
             <span className={styles.summarySubtext}>
-              ({verifiedMatching} verified, {estimatedMatching} estimated)
+              ({verifiedMatching} verified, {estimatedMatching} estimated, {removedMatching} removed)
             </span>
           </div>
 

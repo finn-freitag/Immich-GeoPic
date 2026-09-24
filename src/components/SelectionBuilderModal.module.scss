@@ -186,7 +186,7 @@
 /* Status Checkboxes */
 .statusGrid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 10px;
 }
 
@@ -252,6 +252,11 @@
   &.estimated {
     color: var(--warning);
     border-color: rgba(245, 158, 11, 0.3);
+  }
+
+  &.removed {
+    color: var(--danger);
+    border-color: rgba(239, 68, 68, 0.3);
   }
 }
 

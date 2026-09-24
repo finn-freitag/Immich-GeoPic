@@ -23,7 +23,7 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [timespanPreset, setTimespanPreset] = useState<TimespanPreset>("6m");
   const [zoomCategoryTarget, setZoomCategoryTarget] = useState<{
-    category: "all" | "geotagged" | "unreferenced";
+    category: "all" | "geotagged" | "unreferenced" | "removed";
     timestamp: number;
   } | null>(null);
 
@@ -247,7 +247,14 @@ export default function Home() {
     () => images.filter((img) => !!img.coords).length,
     [images]
   );
-  const estimatedCount = images.length - geotaggedCount;
+  const removedCount = useMemo(
+    () => images.filter((img) => !img.coords && img.isCleared).length,
+    [images]
+  );
+  const estimatedCount = useMemo(
+    () => images.filter((img) => !img.coords && !img.isCleared).length,
+    [images]
+  );
 
   // Show loading during initial auth check
   if (isAuthenticated === null) {
@@ -274,6 +281,7 @@ export default function Home() {
         totalCount={images.length}
         geotaggedCount={geotaggedCount}
         estimatedCount={estimatedCount}
+        removedCount={removedCount}
         isLoading={isLoading}
         onRefresh={() => loadImages(startDate, endDate, timespanPreset === "all")}
         onZoomCategory={(category) =>

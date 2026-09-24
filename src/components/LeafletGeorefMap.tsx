@@ -27,6 +27,7 @@ import {
   Calendar,
   CheckCircle2,
   AlertCircle,
+  XCircle,
   HelpCircle,
   Maximize2,
   BoxSelect,
@@ -61,7 +62,7 @@ type Props = {
   zoom?: number;
   sessionToken?: string | null;
   zoomCategoryTarget?: {
-    category: "all" | "geotagged" | "unreferenced";
+    category: "all" | "geotagged" | "unreferenced" | "removed";
     timestamp: number;
   } | null;
   topBarStartDate?: string;
@@ -263,7 +264,7 @@ interface CameraControllerProps {
   trigger: number;
   coords: [number, number][];
   zoomCategoryTarget?: {
-    category: "all" | "geotagged" | "unreferenced";
+    category: "all" | "geotagged" | "unreferenced" | "removed";
     timestamp: number;
   } | null;
   computedImages: MapDisplayItem[];
@@ -348,6 +349,19 @@ function CameraController({
       for (const img of photos) {
         if (
           !img.coords &&
+          !img.isCleared &&
+          img.estCoords &&
+          !Number.isNaN(img.estCoords.lat) &&
+          !Number.isNaN(img.estCoords.lng)
+        ) {
+          targetCoords.push([img.estCoords.lat, img.estCoords.lng]);
+        }
+      }
+    } else if (category === "removed") {
+      for (const img of photos) {
+        if (
+          !img.coords &&
+          img.isCleared &&
           img.estCoords &&
           !Number.isNaN(img.estCoords.lat) &&
           !Number.isNaN(img.estCoords.lng)
@@ -962,6 +976,16 @@ export default function LeafletGeorefMap(props: Props) {
     return selectedItems.filter((i) => hasValidCoords(i));
   }, [selectedItems]);
 
+  const pureEstimatedSelected = useMemo(() => {
+    return selectedItems.filter(
+      (i) => !hasValidCoords(i) && !i.isCleared && i.estimated && i.estCoords
+    );
+  }, [selectedItems]);
+
+  const removedSelected = useMemo(() => {
+    return selectedItems.filter((i) => !hasValidCoords(i) && i.isCleared);
+  }, [selectedItems]);
+
   // Compute anchor center and bounds for relative movement blueprint
   const selectionAnchor = useMemo(() => {
     if (selectedItems.length === 0) return null;
@@ -1566,9 +1590,17 @@ export default function LeafletGeorefMap(props: Props) {
         if (update) {
           const { estimated, estCoords, ...clean } = img as MapDisplayItem;
           if (data.directFix) {
-            return { ...clean, coords: update.coords };
+            return { ...clean, coords: update.coords, isCleared: false };
           } else {
-            return { ...clean, coords: undefined, estimated: true, estCoords: update.estCoords };
+            const hadCoords = Boolean(clean.coords || clean.hasImmichCoords);
+            return {
+              ...clean,
+              coords: undefined,
+              estimated: true,
+              estCoords: update.estCoords,
+              isCleared: hadCoords,
+              hasImmichCoords: hadCoords,
+            };
           }
         }
         return img;
@@ -1640,9 +1672,17 @@ export default function LeafletGeorefMap(props: Props) {
         if (update) {
           const { estimated, estCoords, ...clean } = img as MapDisplayItem;
           if (data.directFix) {
-            return { ...clean, coords: update.coords };
+            return { ...clean, coords: update.coords, isCleared: false };
           } else {
-            return { ...clean, coords: undefined, estimated: true, estCoords: update.estCoords };
+            const hadCoords = Boolean(clean.coords || clean.hasImmichCoords);
+            return {
+              ...clean,
+              coords: undefined,
+              estimated: true,
+              estCoords: update.estCoords,
+              isCleared: hadCoords,
+              hasImmichCoords: hadCoords,
+            };
           }
         }
         return img;
@@ -1736,7 +1776,7 @@ export default function LeafletGeorefMap(props: Props) {
       const updated = images.map((img) => {
         if (img.id === selectedImage.id) {
           const { estimated, estCoords, ...clean } = img as MapDisplayItem;
-          return { ...clean, coords: { lat, lng } };
+          return { ...clean, coords: { lat, lng }, isCleared: false };
         }
         return img;
       });
@@ -1767,7 +1807,7 @@ export default function LeafletGeorefMap(props: Props) {
       const updated = images.map((img) => {
         if (img.id === selectedImage.id) {
           const { estimated, estCoords, ...clean } = img as MapDisplayItem;
-          return { ...clean, coords };
+          return { ...clean, coords, isCleared: false };
         }
         return img;
       });
@@ -1797,7 +1837,14 @@ export default function LeafletGeorefMap(props: Props) {
       const updated = images.map((img) => {
         if (img.id === selectedImage.id) {
           const { estimated, estCoords, ...clean } = img as MapDisplayItem;
-          return { ...clean, coords: undefined, city: undefined, country: undefined };
+          return {
+            ...clean,
+            coords: undefined,
+            city: undefined,
+            country: undefined,
+            isCleared: true,
+            hasImmichCoords: true,
+          };
         }
         return img;
       });
@@ -1811,6 +1858,8 @@ export default function LeafletGeorefMap(props: Props) {
           city: undefined,
           country: undefined,
           estimated: true,
+          isCleared: true,
+          hasImmichCoords: true,
         };
       });
     } catch (err) {
@@ -1845,7 +1894,7 @@ export default function LeafletGeorefMap(props: Props) {
         const newCoords = updatedMap.get(img.id);
         if (newCoords) {
           const { estimated, estCoords, ...clean } = img as MapDisplayItem;
-          return { ...clean, coords: newCoords };
+          return { ...clean, coords: newCoords, isCleared: false };
         }
         return img;
       });
@@ -1886,6 +1935,8 @@ export default function LeafletGeorefMap(props: Props) {
             city: undefined,
             country: undefined,
             estimated: true,
+            isCleared: true,
+            hasImmichCoords: true,
           };
         }
         return img;
@@ -1926,7 +1977,7 @@ export default function LeafletGeorefMap(props: Props) {
         const newCoords = updatedMap.get(img.id);
         if (newCoords) {
           const { estimated, estCoords, ...clean } = img as MapDisplayItem;
-          return { ...clean, coords: newCoords };
+          return { ...clean, coords: newCoords, isCleared: false };
         }
         return img;
       });
@@ -1981,7 +2032,7 @@ export default function LeafletGeorefMap(props: Props) {
         const newCoords = updatedMap.get(img.id);
         if (newCoords) {
           const { estimated, estCoords, ...clean } = img as MapDisplayItem;
-          return { ...clean, coords: newCoords };
+          return { ...clean, coords: newCoords, isCleared: false };
         }
         return img;
       });
@@ -2343,6 +2394,9 @@ export default function LeafletGeorefMap(props: Props) {
               <strong style={{ color: "var(--warning)" }}>Orange Markers:</strong> Photos without GPS, estimated along your route based on chronological capture times.
             </li>
             <li>
+              <strong style={{ color: "var(--danger)" }}>Red Markers:</strong> Photos with coordinates set and later removed from Immich (estimated position).
+            </li>
+            <li>
               <strong>Relocate:</strong> Click any marker, select &quot;Relocate Marker&quot;, then click anywhere on the map to place it.
             </li>
             <li>
@@ -2364,7 +2418,7 @@ export default function LeafletGeorefMap(props: Props) {
           <div className={styles.selectionText}>
             <BoxSelect size={16} />
             <span>
-              {selectedItems.length} photos ({estimatedInBounds.length} estimated{verifiedSelected.length > 0 ? `, ${verifiedSelected.length} verified` : ""})
+              {selectedItems.length} photos ({pureEstimatedSelected.length} estimated{removedSelected.length > 0 ? `, ${removedSelected.length} removed` : ""}{verifiedSelected.length > 0 ? `, ${verifiedSelected.length} verified` : ""})
             </span>
             {selectedPhotoIds !== null && (
               <span className={styles.filteredBadge} title="Filtered selection active">
@@ -2373,88 +2427,91 @@ export default function LeafletGeorefMap(props: Props) {
             )}
           </div>
 
-          {/* Refine / Build Selection Button */}
-          <button
-            className={`${styles.toolBtn} ${styles.filter}`}
-            onClick={() => setShowSelectionBuilder(true)}
-            title="Refine selection with metadata & timespan filters"
-          >
-            <Filter size={14} />
-            <span>Refine Selection</span>
-          </button>
-
-          {/* Modify Timestamps for selection */}
-          {selectedItems.length > 0 && (
+          {/* Wrapped Tool Cards */}
+          <div className={styles.selectionTools}>
+            {/* Refine / Build Selection Button */}
             <button
-              className={`${styles.toolBtn} ${styles.timestamp}`}
-              onClick={() => setTimestampModalPhotos(selectedItems)}
-              disabled={isUpdating}
-              title={`Modify timestamp for ${selectedItems.length} photos`}
+              className={`${styles.toolBtn} ${styles.filter}`}
+              onClick={() => setShowSelectionBuilder(true)}
+              title="Refine selection with metadata & timespan filters"
             >
-              <Clock size={14} />
-              <span>Modify Timestamps ({selectedItems.length})</span>
+              <Filter size={14} />
+              <span>Refine Selection</span>
             </button>
-          )}
 
-          {/* Move to Point & Move Relative Buttons */}
-          {selectedItems.length > 0 && (
-            <>
+            {/* Modify Timestamps for selection */}
+            {selectedItems.length > 0 && (
               <button
-                className={`${styles.toolBtn} ${styles.movePoint} ${
-                  batchMoveMode === "point" ? styles.active : ""
-                }`}
-                onClick={() => {
-                  setIsRelocating(false);
-                  setIsPickingGroupPos(false);
-                  setBatchMoveMode((prev) => (prev === "point" ? null : "point"));
-                }}
+                className={`${styles.toolBtn} ${styles.timestamp}`}
+                onClick={() => setTimestampModalPhotos(selectedItems)}
                 disabled={isUpdating}
-                title="Move all selected markers to a single coordinate on the map"
+                title={`Modify timestamp for ${selectedItems.length} photos`}
               >
-                <MapPin size={14} />
-                <span>{batchMoveMode === "point" ? "Click Map to Move" : "Move to Point"}</span>
+                <Clock size={14} />
+                <span>Modify Timestamps ({selectedItems.length})</span>
               </button>
+            )}
 
+            {/* Move to Point & Move Relative Buttons */}
+            {selectedItems.length > 0 && (
+              <>
+                <button
+                  className={`${styles.toolBtn} ${styles.movePoint} ${
+                    batchMoveMode === "point" ? styles.active : ""
+                  }`}
+                  onClick={() => {
+                    setIsRelocating(false);
+                    setIsPickingGroupPos(false);
+                    setBatchMoveMode((prev) => (prev === "point" ? null : "point"));
+                  }}
+                  disabled={isUpdating}
+                  title="Move all selected markers to a single coordinate on the map"
+                >
+                  <MapPin size={14} />
+                  <span>{batchMoveMode === "point" ? "Click Map to Move" : "Move to Point"}</span>
+                </button>
+
+                <button
+                  className={`${styles.toolBtn} ${styles.moveRelative} ${
+                    batchMoveMode === "relative" ? styles.active : ""
+                  }`}
+                  onClick={() => {
+                    setIsRelocating(false);
+                    setIsPickingGroupPos(false);
+                    setBatchMoveMode((prev) => (prev === "relative" ? null : "relative"));
+                  }}
+                  disabled={isUpdating}
+                  title="Move selection with markers, keeping their relative position to each other (with blueprint preview)"
+                >
+                  <Move size={14} />
+                  <span>{batchMoveMode === "relative" ? "Click Map to Place" : "Move Relative"}</span>
+                </button>
+              </>
+            )}
+
+            {estimatedInBounds.length > 0 && (
               <button
-                className={`${styles.toolBtn} ${styles.moveRelative} ${
-                  batchMoveMode === "relative" ? styles.active : ""
-                }`}
-                onClick={() => {
-                  setIsRelocating(false);
-                  setIsPickingGroupPos(false);
-                  setBatchMoveMode((prev) => (prev === "relative" ? null : "relative"));
-                }}
+                className={`${styles.toolBtn} ${styles.fix}`}
+                onClick={handleFixBatchMarkers}
                 disabled={isUpdating}
-                title="Move selection with markers, keeping their relative position to each other (with blueprint preview)"
               >
-                <Move size={14} />
-                <span>{batchMoveMode === "relative" ? "Click Map to Place" : "Move Relative"}</span>
+                <CheckCheck size={14} />
+                <span>Fix {estimatedInBounds.length} Estimated</span>
               </button>
-            </>
-          )}
+            )}
 
-          {estimatedInBounds.length > 0 && (
-            <button
-              className={`${styles.toolBtn} ${styles.fix}`}
-              onClick={handleFixBatchMarkers}
-              disabled={isUpdating}
-            >
-              <CheckCheck size={14} />
-              <span>Fix {estimatedInBounds.length} Estimated</span>
-            </button>
-          )}
-
-          {verifiedSelected.length > 0 && (
-            <button
-              className={`${styles.toolBtn} ${styles.danger}`}
-              onClick={handleRemoveBatchCoordinates}
-              disabled={isUpdating}
-              title={`Remove coordinates from ${verifiedSelected.length} photos`}
-            >
-              <Trash2 size={14} />
-              <span>Remove Coordinates ({verifiedSelected.length})</span>
-            </button>
-          )}
+            {verifiedSelected.length > 0 && (
+              <button
+                className={`${styles.toolBtn} ${styles.danger}`}
+                onClick={handleRemoveBatchCoordinates}
+                disabled={isUpdating}
+                title={`Remove coordinates from ${verifiedSelected.length} photos`}
+              >
+                <Trash2 size={14} />
+                <span>Remove Coordinates ({verifiedSelected.length})</span>
+              </button>
+            )}
+          </div>
 
           {/* Quick Groups assignment for multi-selection */}
           {groups.length > 0 && selectedItems.length > 0 && (
@@ -2588,6 +2645,7 @@ export default function LeafletGeorefMap(props: Props) {
         {/* Photo Markers - rendered on top so they are always clickable */}
         {photoItems.map((it) => {
           const isVerified = !!it.coords;
+          const isCleared = !isVerified && !!it.isCleared;
           const lat = isVerified ? it.coords!.lat : it.estCoords?.lat;
           const lng = isVerified ? it.coords!.lng : it.estCoords?.lng;
 
@@ -2604,7 +2662,7 @@ export default function LeafletGeorefMap(props: Props) {
           const isInBoundsNotSelected =
             bounds && selectedPhotoIds !== null && !isBatchSelected && bounds.contains([lat, lng]);
 
-          const color = isVerified ? "#10b981" : "#f59e0b";
+          const color = isVerified ? "#10b981" : (isCleared ? "#ef4444" : "#f59e0b");
 
           return (
             <CircleMarker
@@ -2727,13 +2785,22 @@ export default function LeafletGeorefMap(props: Props) {
             />
             <div
               className={`${styles.badgeOverlay} ${
-                selectedImage.coords ? styles.verified : styles.estimated
+                selectedImage.coords
+                  ? styles.verified
+                  : selectedImage.isCleared
+                  ? styles.removed
+                  : styles.estimated
               }`}
             >
               {selectedImage.coords ? (
                 <>
                   <CheckCircle2 size={12} />
                   <span>GPS Verified</span>
+                </>
+              ) : selectedImage.isCleared ? (
+                <>
+                  <XCircle size={12} />
+                  <span>Removed GPS</span>
                 </>
               ) : (
                 <>

@@ -7,6 +7,8 @@ export type ImageItem = {
         lat: number;
         lng: number;
     };
+    isCleared?: boolean;
+    hasImmichCoords?: boolean;
     city?: string;
     country?: string;
     thumbUrl?: string;

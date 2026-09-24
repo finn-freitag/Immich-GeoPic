@@ -10,6 +10,7 @@ import {
   ShieldCheck,
   CheckCircle2,
   AlertCircle,
+  XCircle,
   Layers,
 } from "lucide-react";
 
@@ -32,9 +33,10 @@ export type HeaderBarProps = {
   totalCount: number;
   geotaggedCount: number;
   estimatedCount: number;
+  removedCount: number;
   isLoading: boolean;
   onRefresh: () => void;
-  onZoomCategory?: (category: "all" | "geotagged" | "unreferenced") => void;
+  onZoomCategory?: (category: "all" | "geotagged" | "unreferenced" | "removed") => void;
 };
 
 export default function HeaderBar({
@@ -49,6 +51,7 @@ export default function HeaderBar({
   totalCount,
   geotaggedCount,
   estimatedCount,
+  removedCount,
   isLoading,
   onRefresh,
   onZoomCategory,
@@ -157,6 +160,16 @@ export default function HeaderBar({
           >
             <AlertCircle size={13} />
             <span>{estimatedCount.toLocaleString()}</span>
+          </button>
+          <button
+            type="button"
+            className={`${styles.badge} ${styles.removed}`}
+            onClick={() => onZoomCategory?.("removed")}
+            title="Zoom map to photos with removed GPS coordinates (estimated position)"
+            disabled={removedCount === 0}
+          >
+            <XCircle size={13} />
+            <span>{removedCount.toLocaleString()}</span>
           </button>
         </div>
 

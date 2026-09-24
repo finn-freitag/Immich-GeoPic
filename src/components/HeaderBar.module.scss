@@ -176,6 +176,18 @@
     }
   }
 
+  &.removed {
+    background-color: var(--danger-light);
+    color: var(--danger);
+    border-color: rgba(239, 68, 68, 0.2);
+
+    &:hover:not(:disabled) {
+      border-color: var(--danger);
+      transform: translateY(-1px);
+      box-shadow: 0 2px 6px rgba(239, 68, 68, 0.2);
+    }
+  }
+
   &:active:not(:disabled) {
     transform: translateY(0);
   }
