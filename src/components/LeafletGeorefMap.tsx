@@ -1104,8 +1104,7 @@ export default function LeafletGeorefMap(props: Props) {
       setFlyToBoundsTarget(b);
     }
 
-    // 6. Set editing track and deselect any photo so the editor has focus
-    setSelectedImage(null);
+    // 6. Set editing track
     setEditingGpxTrack(track);
   };
 
@@ -2015,7 +2014,7 @@ export default function LeafletGeorefMap(props: Props) {
       </MapContainer>
 
       {/* Photo Inspector Panel */}
-      {selectedImage && !editingGpxTrack && (
+      {selectedImage && (
         <div className={styles.inspectorCard}>
           <div className={styles.cardHeader}>
             <div className={styles.cardTitle}>

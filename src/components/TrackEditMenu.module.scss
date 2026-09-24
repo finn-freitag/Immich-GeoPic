@@ -1,10 +1,10 @@
 .menuContainer {
   position: absolute;
-  top: 16px;
-  right: 16px;
-  width: 400px;
-  max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 32px);
+  bottom: 24px;
+  left: 68px;
+  width: 390px;
+  max-width: calc(100vw - 84px);
+  max-height: calc(100% - 48px);
   background-color: var(--surface);
   border: 1px solid var(--surface-border);
   border-radius: var(--radius-lg);
@@ -13,13 +13,13 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  animation: slideInRight 0.2s ease-out;
+  animation: slideInLeft 0.2s ease-out;
 }
 
-@keyframes slideInRight {
+@keyframes slideInLeft {
   from {
     opacity: 0;
-    transform: translateX(12px);
+    transform: translateX(-12px);
   }
   to {
     opacity: 1;
