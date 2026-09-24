@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { bulkUpdateLocations } from "@/lib/immich";
 import { resolveAuth } from "@/lib/session";
+import { removeClearedLocation } from "@/lib/clearedStorage";
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,6 +18,11 @@ export async function POST(req: NextRequest) {
     }
 
     const result = await bulkUpdateLocations(ctx.auth, updates);
+    const updatedIds = updates.map((u: { id: string }) => u.id).filter(Boolean);
+    if (updatedIds.length > 0) {
+      await removeClearedLocation(ctx.user?.id, updatedIds);
+    }
+
     return NextResponse.json({
       success: true,
       updated: result.success,

@@ -52,17 +52,27 @@ export async function POST(req: NextRequest) {
 
     if (contentType.includes("multipart/form-data")) {
       const formData = await req.formData();
-      const file = formData.get("file");
+      const files = [...formData.getAll("files"), ...formData.getAll("file")].filter(
+        (f): f is File => typeof f !== "string"
+      );
 
-      if (!file || !(file instanceof Blob)) {
+      if (files.length === 0) {
         return NextResponse.json({ error: "No GPX file uploaded" }, { status: 400 });
       }
 
-      const filename = file instanceof File ? file.name : "track.gpx";
-      const rawText = await file.text();
+      const tracks = [];
+      for (const file of files) {
+        const filename = file.name || "track.gpx";
+        const rawText = await file.text();
+        const track = await saveUserFileTrack(userId, filename, rawText);
+        tracks.push(track);
+      }
 
-      const track = await saveUserFileTrack(userId, filename, rawText);
-      return NextResponse.json({ success: true, track });
+      return NextResponse.json({
+        success: true,
+        tracks,
+        track: tracks[0],
+      });
     } else {
       const body = await req.json();
 

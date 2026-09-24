@@ -37,7 +37,7 @@ export type BaseMapModalProps = {
   // GPX Track Props
   gpxTracks?: GpxTrackMetadata[];
   onToggleGpxVisibility?: (id: string, isVisible: boolean) => Promise<void>;
-  onUploadGpxFile?: (file: File) => Promise<void>;
+  onUploadGpxFile?: (file: File | File[]) => Promise<void>;
   onAddGpxUrl?: (url: string, name?: string) => Promise<void>;
   onDeleteGpxTrack?: (id: string) => Promise<void>;
   onZoomToGpxTrack?: (track: GpxTrackMetadata) => void;
@@ -197,17 +197,17 @@ export default function BaseMapModal({
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    if (files.length === 0) return;
 
     setIsUploadingGpx(true);
     setError(null);
     try {
       if (onUploadGpxFile) {
-        await onUploadGpxFile(file);
+        await onUploadGpxFile(files);
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to upload GPX file");
+      setError(err instanceof Error ? err.message : "Failed to upload GPX file(s)");
     } finally {
       setIsUploadingGpx(false);
       if (fileInputRef.current) {
@@ -263,8 +263,10 @@ export default function BaseMapModal({
     setIsDraggingModal(false);
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const file = e.dataTransfer.files[0];
-      if (!file.name.toLowerCase().endsWith(".gpx")) {
+      const gpxFiles = Array.from(e.dataTransfer.files).filter((file) =>
+        file.name.toLowerCase().endsWith(".gpx")
+      );
+      if (gpxFiles.length === 0) {
         setError("Only .gpx files are supported.");
         return;
       }
@@ -273,10 +275,10 @@ export default function BaseMapModal({
       setError(null);
       try {
         if (onUploadGpxFile) {
-          await onUploadGpxFile(file);
+          await onUploadGpxFile(gpxFiles);
         }
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Failed to upload GPX file");
+        setError(err instanceof Error ? err.message : "Failed to upload GPX file(s)");
       } finally {
         setIsUploadingGpx(false);
       }
@@ -548,6 +550,7 @@ export default function BaseMapModal({
                   type="file"
                   ref={fileInputRef}
                   accept=".gpx"
+                  multiple
                   style={{ display: "none" }}
                   onChange={handleFileChange}
                 />

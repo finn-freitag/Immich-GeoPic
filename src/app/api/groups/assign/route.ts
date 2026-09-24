@@ -8,6 +8,7 @@ import {
   InternalGpxEntry,
 } from "@/lib/internalGpx";
 import { AssignToGroupRequest, AssignToGroupResponse } from "@/types/VirtualGroup";
+import { addClearedLocation, removeClearedLocation } from "@/lib/clearedStorage";
 
 /**
  * Returns a random geographic point uniformly distributed inside a circle of radius meters.
@@ -108,6 +109,7 @@ export async function POST(req: NextRequest) {
 
       // Remove these photos from internal_estimated.gpx if they were previously there
       await removePhotosFromInternalGpx(userId, photoIds);
+      await removeClearedLocation(userId, photoIds);
 
       const response: AssignToGroupResponse = {
         success: true,
@@ -117,22 +119,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(response);
     } else {
       // 2. ESTIMATED POSITION: Align via internal GPX track
-      // If any photo already has GPS coordinates in Immich, remove them first
+      // If any photo already has GPS coordinates in Immich, clear them in GeoPic
       const photosWithCoords = targetPhotos.filter((p) => p.hasCoords);
       if (photosWithCoords.length > 0) {
-        const batchSize = 5;
-        for (let i = 0; i < photosWithCoords.length; i += batchSize) {
-          const batch = photosWithCoords.slice(i, i + batchSize);
-          await Promise.all(
-            batch.map(async (photo) => {
-              try {
-                await updateAssetLocation(ctx.auth, photo.id, null);
-              } catch (err) {
-                console.error(`[AssignGroup] Failed to clear GPS for ${photo.id}:`, err);
-              }
-            })
-          );
-        }
+        await addClearedLocation(userId, photosWithCoords.map((p) => p.id));
       }
 
       // Generate entries for internal GPX

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { searchAssets } from "@/lib/immich";
 import { resolveAuth } from "@/lib/session";
 import { ImageItem } from "@/types/ImageItem";
+import { getClearedLocations } from "@/lib/clearedStorage";
 
 export async function GET(req: NextRequest) {
   try {
@@ -38,6 +39,8 @@ export async function GET(req: NextRequest) {
       size: 1000,
     });
 
+    const clearedSet = await getClearedLocations(ctx.user?.id);
+
     const images: ImageItem[] = items.map((asset) => {
       const timestamp =
         asset.exifInfo?.dateTimeOriginal ||
@@ -46,10 +49,13 @@ export async function GET(req: NextRequest) {
         new Date().toISOString();
 
       let coords: { lat: number; lng: number } | undefined;
-      const lat = asset.exifInfo?.latitude;
-      const lng = asset.exifInfo?.longitude;
-      if (lat != null && lng != null && !Number.isNaN(Number(lat)) && !Number.isNaN(Number(lng))) {
-        coords = { lat: Number(lat), lng: Number(lng) };
+      const isCleared = clearedSet.has(asset.id);
+      if (!isCleared) {
+        const lat = asset.exifInfo?.latitude;
+        const lng = asset.exifInfo?.longitude;
+        if (lat != null && lng != null && !Number.isNaN(Number(lat)) && !Number.isNaN(Number(lng))) {
+          coords = { lat: Number(lat), lng: Number(lng) };
+        }
       }
 
       return {
@@ -57,8 +63,8 @@ export async function GET(req: NextRequest) {
         name: asset.originalFileName || "Untitled",
         timestamp,
         coords,
-        city: asset.exifInfo?.city || undefined,
-        country: asset.exifInfo?.country || undefined,
+        city: isCleared ? undefined : (asset.exifInfo?.city || undefined),
+        country: isCleared ? undefined : (asset.exifInfo?.country || undefined),
         thumbUrl: `/api/images/${asset.id}/thumbnail`,
         timeZone: asset.exifInfo?.timeZone || undefined,
         localDateTime: asset.localDateTime || asset.exifInfo?.dateTimeOriginal || undefined,

@@ -356,9 +356,15 @@ export async function updateAssetLocation(
   assetId: string,
   coords: { lat: number; lng: number } | null
 ): Promise<void> {
+  // Immich API rejects null coordinates with 400 Bad Request.
+  // Clearing coordinates is handled inside GeoPic.
+  if (!coords) {
+    return;
+  }
+
   const baseUrl = getImmichUrl();
-  const latitude = coords ? coords.lat : null;
-  const longitude = coords ? coords.lng : null;
+  const latitude = coords.lat;
+  const longitude = coords.lng;
 
   // Try bulk update endpoint PUT /api/assets first
   const bulkRes = await fetch(`${baseUrl}/api/assets`, {
