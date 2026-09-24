@@ -43,6 +43,7 @@ import {
   Camera,
   Clock,
   Pencil,
+  Move,
 } from "lucide-react";
 import { BaseMap, BaseMapPreset, DEFAULT_BASEMAP, BASEMAP_PRESETS } from "@/types/BaseMap";
 import { VirtualGroup } from "@/types/VirtualGroup";
@@ -97,6 +98,20 @@ function hasValidCoords(img: { coords?: { lat?: number; lng?: number } }): boole
     !Number.isNaN(img.coords.lat) &&
     !Number.isNaN(img.coords.lng)
   );
+}
+
+function getItemCoords(img: { coords?: { lat?: number; lng?: number }; estCoords?: { lat?: number; lng?: number } }): { lat: number; lng: number } | null {
+  const c = img.coords || img.estCoords;
+  if (
+    !c ||
+    typeof c.lat !== "number" ||
+    typeof c.lng !== "number" ||
+    Number.isNaN(c.lat) ||
+    Number.isNaN(c.lng)
+  ) {
+    return null;
+  }
+  return { lat: c.lat, lng: c.lng };
 }
 
 function deterministicOffset(id: string, salt: number, scale = 0.001): number {
@@ -368,6 +383,8 @@ interface RectangleDrawerProps {
   setIsRelocating: (val: boolean) => void;
   isPickingGroupPos?: boolean;
   setIsPickingGroupPos?: (val: boolean) => void;
+  batchMoveMode?: "point" | "relative" | null;
+  setBatchMoveMode?: (mode: "point" | "relative" | null) => void;
   bounds: LatLngBounds | null;
   setBounds: (bounds: LatLngBounds | null) => void;
   onMapClick: (e: LeafletMouseEvent) => void;
@@ -380,6 +397,8 @@ function RectangleDrawer({
   setIsRelocating,
   isPickingGroupPos = false,
   setIsPickingGroupPos,
+  batchMoveMode = null,
+  setBatchMoveMode,
   bounds,
   setBounds,
   onMapClick,
@@ -403,6 +422,12 @@ function RectangleDrawer({
 
   const isPickingGroupPosRef = useRef(isPickingGroupPos);
   isPickingGroupPosRef.current = isPickingGroupPos;
+
+  const batchMoveModeRef = useRef(batchMoveMode);
+  batchMoveModeRef.current = batchMoveMode;
+
+  const setBatchMoveModeRef = useRef(setBatchMoveMode);
+  setBatchMoveModeRef.current = setBatchMoveMode;
 
   const onMapClickRef = useRef(onMapClick);
   onMapClickRef.current = onMapClick;
@@ -432,6 +457,10 @@ function RectangleDrawer({
         map.dragging.disable();
       }
       if (e.key === "Escape") {
+        if (batchMoveModeRef.current) {
+          setBatchMoveModeRef.current?.(null);
+          return;
+        }
         setIsRelocatingRef.current(false);
         if (setIsPickingGroupPosRef.current) {
           setIsPickingGroupPosRef.current(false);
@@ -484,7 +513,7 @@ function RectangleDrawer({
 
   useMapEvents({
     mousedown(e) {
-      if (isRelocatingRef.current || isPickingGroupPosRef.current) return;
+      if (isRelocatingRef.current || isPickingGroupPosRef.current || batchMoveModeRef.current) return;
       if (shiftPressed.current || boxSelectModeRef.current) {
         isDrawingRef.current = true;
         startLatLngRef.current = e.latlng;
@@ -529,7 +558,7 @@ function RectangleDrawer({
       }
     },
     click(e) {
-      if ((isRelocatingRef.current || isPickingGroupPosRef.current) && e.originalEvent) {
+      if ((isRelocatingRef.current || isPickingGroupPosRef.current || batchMoveModeRef.current) && e.originalEvent) {
         // Calculate true geographic coordinates from mouse position so it never snaps to marker centers
         const trueLatLng = map.mouseEventToLatLng(e.originalEvent);
         onMapClickRef.current({ ...e, latlng: trueLatLng });
@@ -559,16 +588,18 @@ function RectangleDrawer({
 interface RelocationInteractivityControllerProps {
   isRelocating: boolean;
   isPickingGroupPos?: boolean;
+  batchMoveMode?: "point" | "relative" | null;
   images: ImageItem[];
 }
 
 function RelocationInteractivityController({
   isRelocating,
   isPickingGroupPos = false,
+  batchMoveMode = null,
   images,
 }: RelocationInteractivityControllerProps) {
   const map = useMap();
-  const isClickThrough = isRelocating || isPickingGroupPos;
+  const isClickThrough = isRelocating || isPickingGroupPos || batchMoveMode !== null;
 
   useEffect(() => {
     map.eachLayer((layer: any) => {
@@ -625,6 +656,139 @@ function RelocationInteractivityController({
   return null;
 }
 
+interface SelectionBlueprintProps {
+  active: boolean;
+  selectedItems: MapDisplayItem[];
+  anchor: {
+    center: LatLng;
+    minLat: number;
+    maxLat: number;
+    minLng: number;
+    maxLng: number;
+    spanLat: number;
+    spanLng: number;
+    count: number;
+  } | null;
+}
+
+function SelectionBlueprint({
+  active,
+  selectedItems,
+  anchor,
+}: SelectionBlueprintProps) {
+  const map = useMap();
+  const [cursorLatLng, setCursorLatLng] = useState<LatLng | null>(null);
+
+  // When active becomes true, initialize cursor at anchor center so blueprint is visible immediately
+  useEffect(() => {
+    if (active && anchor) {
+      setCursorLatLng(anchor.center);
+    } else if (!active) {
+      setCursorLatLng(null);
+    }
+  }, [active, anchor]);
+
+  useMapEvents({
+    mousemove(e) {
+      if (!active) return;
+      const latlng = e.originalEvent ? map.mouseEventToLatLng(e.originalEvent) : e.latlng;
+      setCursorLatLng(latlng);
+    },
+  });
+
+  if (!active || !anchor || !cursorLatLng) return null;
+
+  const dLat = cursorLatLng.lat - anchor.center.lat;
+  const dLng = cursorLatLng.lng - anchor.center.lng;
+
+  const blueprintBounds = L.latLngBounds(
+    [anchor.minLat + dLat, anchor.minLng + dLng],
+    [anchor.maxLat + dLat, anchor.maxLng + dLng]
+  );
+
+  return (
+    <>
+      {/* Dashed connector line showing translation from original center to blueprint cursor */}
+      <Polyline
+        positions={[
+          [anchor.center.lat, anchor.center.lng],
+          [cursorLatLng.lat, cursorLatLng.lng],
+        ]}
+        interactive={false}
+        pathOptions={{
+          color: "#0284c7",
+          weight: 2,
+          opacity: 0.65,
+          dashArray: "5, 5",
+        }}
+      />
+
+      {/* Blueprint bounding box */}
+      {(anchor.spanLat > 0 || anchor.spanLng > 0) && (
+        <Rectangle
+          bounds={blueprintBounds}
+          interactive={false}
+          pathOptions={{
+            color: "#0284c7",
+            weight: 1.5,
+            dashArray: "4, 4",
+            fillColor: "#0ea5e9",
+            fillOpacity: 0.08,
+            className: styles.blueprintBox,
+          }}
+        />
+      )}
+
+      {/* Blueprint ghost markers */}
+      {selectedItems.map((item) => {
+        const c = getItemCoords(item);
+        if (!c) return null;
+        const bLat = c.lat + dLat;
+        const bLng = c.lng + dLng;
+
+        return (
+          <CircleMarker
+            key={`blueprint_${item.id}`}
+            center={[bLat, bLng]}
+            radius={8}
+            interactive={false}
+            pathOptions={{
+              color: "#0284c7",
+              weight: 2,
+              dashArray: "3, 3",
+              fillColor: "#38bdf8",
+              fillOpacity: 0.75,
+              className: styles.blueprintMarker,
+            }}
+          />
+        );
+      })}
+
+      {/* Blueprint center target indicator & tooltip */}
+      <CircleMarker
+        center={[cursorLatLng.lat, cursorLatLng.lng]}
+        radius={4}
+        interactive={false}
+        pathOptions={{
+          color: "#0369a1",
+          weight: 2,
+          fillColor: "#ffffff",
+          fillOpacity: 1,
+        }}
+      >
+        <Tooltip
+          permanent
+          direction="top"
+          offset={[0, -10]}
+          className={styles.blueprintTooltip}
+        >
+          <span>Blueprint: {selectedItems.length} photos (Click to place)</span>
+        </Tooltip>
+      </CircleMarker>
+    </>
+  );
+}
+
 function MapCenterTracker({
   onCenterChange,
 }: {
@@ -649,6 +813,7 @@ export default function LeafletGeorefMap(props: Props) {
   const [images, setImages] = useState<ImageItem[]>(props.images);
   const [selectedImage, setSelectedImage] = useState<MapDisplayItem | null>(null);
   const [isRelocating, setIsRelocating] = useState(false);
+  const [batchMoveMode, setBatchMoveMode] = useState<"point" | "relative" | null>(null);
   const [boxSelectMode, setBoxSelectMode] = useState(false);
   const [bounds, setBounds] = useState<LatLngBounds | null>(null);
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<Set<string> | null>(null);
@@ -796,6 +961,47 @@ export default function LeafletGeorefMap(props: Props) {
   const verifiedSelected = useMemo(() => {
     return selectedItems.filter((i) => hasValidCoords(i));
   }, [selectedItems]);
+
+  // Compute anchor center and bounds for relative movement blueprint
+  const selectionAnchor = useMemo(() => {
+    if (selectedItems.length === 0) return null;
+    let minLat = Infinity;
+    let maxLat = -Infinity;
+    let minLng = Infinity;
+    let maxLng = -Infinity;
+    let count = 0;
+
+    for (const item of selectedItems) {
+      const c = getItemCoords(item);
+      if (c) {
+        minLat = Math.min(minLat, c.lat);
+        maxLat = Math.max(maxLat, c.lat);
+        minLng = Math.min(minLng, c.lng);
+        maxLng = Math.max(maxLng, c.lng);
+        count++;
+      }
+    }
+
+    if (count === 0) return null;
+
+    return {
+      center: L.latLng((minLat + maxLat) / 2, (minLng + maxLng) / 2),
+      minLat,
+      maxLat,
+      minLng,
+      maxLng,
+      spanLat: maxLat - minLat,
+      spanLng: maxLng - minLng,
+      count,
+    };
+  }, [selectedItems]);
+
+  // Reset batch move mode if selection becomes empty
+  useEffect(() => {
+    if (selectedItems.length === 0 && batchMoveMode !== null) {
+      setBatchMoveMode(null);
+    }
+  }, [selectedItems, batchMoveMode]);
 
   // Clear map drag overlay if modal opens
   useEffect(() => {
@@ -1490,12 +1696,24 @@ export default function LeafletGeorefMap(props: Props) {
     }
   };
 
-  // Single marker relocation click & group position pick
+  // Single marker relocation click & group position pick & batch move click
   const handleMapClick = async (e: LeafletMouseEvent) => {
     if (isPickingGroupPos) {
       setIsPickingGroupPos(false);
       setPickedGroupCoords({ lat: e.latlng.lat, lng: e.latlng.lng });
       setShowGroupsModal(true);
+      return;
+    }
+
+    if (batchMoveMode === "point") {
+      setBatchMoveMode(null);
+      await handleBatchMoveToPoint(e.latlng.lat, e.latlng.lng);
+      return;
+    }
+
+    if (batchMoveMode === "relative") {
+      setBatchMoveMode(null);
+      await handleBatchMoveRelative(e.latlng.lat, e.latlng.lng);
       return;
     }
 
@@ -1683,6 +1901,156 @@ export default function LeafletGeorefMap(props: Props) {
     }
   };
 
+  // Move all selected markers to a single specific coordinate
+  const handleBatchMoveToPoint = async (lat: number, lng: number) => {
+    if (selectedItems.length === 0) return;
+
+    setIsUpdating(true);
+    try {
+      const updates = selectedItems.map((img) => ({
+        id: img.id,
+        coords: { lat, lng },
+      }));
+
+      const res = await fetch("/api/images/bulk-location", {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ updates }),
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to move markers to point: ${res.status}`);
+      }
+
+      const updatedMap = new Map(updates.map((u) => [u.id, u.coords]));
+      const updated = images.map((img) => {
+        const newCoords = updatedMap.get(img.id);
+        if (newCoords) {
+          const { estimated, estCoords, ...clean } = img as MapDisplayItem;
+          return { ...clean, coords: newCoords };
+        }
+        return img;
+      });
+
+      updateImages(updated);
+
+      // Preserve selection tightly around the new destination
+      const delta = 0.0005;
+      const newBounds = L.latLngBounds(
+        [lat - delta, lng - delta],
+        [lat + delta, lng + delta]
+      );
+      setBounds(newBounds);
+    } catch (err) {
+      console.error("Failed to move markers to point:", err);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  // Move selected markers preserving their relative positions to each other
+  const handleBatchMoveRelative = async (targetLat: number, targetLng: number) => {
+    if (selectedItems.length === 0 || !selectionAnchor) return;
+
+    const dLat = targetLat - selectionAnchor.center.lat;
+    const dLng = targetLng - selectionAnchor.center.lng;
+
+    setIsUpdating(true);
+    try {
+      const updates = selectedItems.map((img) => {
+        const c = getItemCoords(img)!;
+        return {
+          id: img.id,
+          coords: {
+            lat: c.lat + dLat,
+            lng: c.lng + dLng,
+          },
+        };
+      });
+
+      const res = await fetch("/api/images/bulk-location", {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ updates }),
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to move selection: ${res.status}`);
+      }
+
+      const updatedMap = new Map(updates.map((u) => [u.id, u.coords]));
+      const updated = images.map((img) => {
+        const newCoords = updatedMap.get(img.id);
+        if (newCoords) {
+          const { estimated, estCoords, ...clean } = img as MapDisplayItem;
+          return { ...clean, coords: newCoords };
+        }
+        return img;
+      });
+
+      updateImages(updated);
+
+      // Shift bounds to the new location to keep markers selected
+      if (bounds) {
+        const newBounds = L.latLngBounds(
+          [bounds.getSouth() + dLat, bounds.getWest() + dLng],
+          [bounds.getNorth() + dLat, bounds.getEast() + dLng]
+        );
+        setBounds(newBounds);
+      }
+    } catch (err) {
+      console.error("Failed to move selection:", err);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  // Toggle individual marker in/out of selection via Shift/Ctrl + Click
+  const handleToggleMarkerSelection = (photo: MapDisplayItem) => {
+    let nextSet: Set<string>;
+    if (selectedPhotoIds !== null) {
+      nextSet = new Set(selectedPhotoIds);
+    } else if (bounds) {
+      nextSet = new Set(selectedItemsInBounds.map((i) => i.id));
+    } else {
+      nextSet = new Set();
+    }
+
+    if (nextSet.has(photo.id)) {
+      nextSet.delete(photo.id);
+    } else {
+      nextSet.add(photo.id);
+    }
+
+    if (nextSet.size === 0) {
+      setBounds(null);
+      setSelectedPhotoIds(null);
+      return;
+    }
+
+    let minLat = Infinity;
+    let maxLat = -Infinity;
+    let minLng = Infinity;
+    let maxLng = -Infinity;
+
+    for (const id of nextSet) {
+      const p = photoItems.find((item) => item.id === id);
+      const c = p ? getItemCoords(p) : null;
+      if (c) {
+        minLat = Math.min(minLat, c.lat);
+        maxLat = Math.max(maxLat, c.lat);
+        minLng = Math.min(minLng, c.lng);
+        maxLng = Math.max(maxLng, c.lng);
+      }
+    }
+
+    if (minLat !== Infinity) {
+      const delta = 0.0005;
+      setBounds(
+        L.latLngBounds([minLat - delta, minLng - delta], [maxLat + delta, maxLng + delta])
+      );
+      setSelectedPhotoIds(nextSet);
+    }
+  };
+
   // Handle timestamp updates applied from TimestampModal
   const handleTimestampsUpdated = (updates: Array<{ id: string; timestamp: string }>) => {
     const updateMap = new Map<string, string>();
@@ -1786,9 +2154,9 @@ export default function LeafletGeorefMap(props: Props) {
 
   return (
     <div
-      className={`${styles.mapWrapper} ${isRelocating ? styles.relocateActive : ""} ${
-        boxSelectMode ? styles.boxSelectActive : ""
-      }`}
+      className={`${styles.mapWrapper} ${
+        isRelocating || batchMoveMode !== null ? styles.relocateActive : ""
+      } ${boxSelectMode ? styles.boxSelectActive : ""}`}
       onDragEnter={(e) => {
         e.preventDefault();
         if (showBaseMapModal) return;
@@ -1857,6 +2225,34 @@ export default function LeafletGeorefMap(props: Props) {
               setIsPickingGroupPos(false);
               setShowGroupsModal(true);
             }}
+          >
+            Cancel (Esc)
+          </button>
+        </div>
+      )}
+
+      {/* Batch Move to Point Banner */}
+      {batchMoveMode === "point" && (
+        <div className={styles.relocateBanner}>
+          <MapPin size={18} className="animate-pulse" />
+          <span>Click anywhere on the map to move all {selectedItems.length} photos to that position</span>
+          <button
+            className={styles.cancelBtn}
+            onClick={() => setBatchMoveMode(null)}
+          >
+            Cancel (Esc)
+          </button>
+        </div>
+      )}
+
+      {/* Batch Move Relative (Blueprint) Banner */}
+      {batchMoveMode === "relative" && (
+        <div className={`${styles.relocateBanner} ${styles.blueprintBanner}`}>
+          <Move size={18} className="animate-pulse" />
+          <span>Move cursor on map to position blueprint. Click to place all {selectedItems.length} photos.</span>
+          <button
+            className={styles.cancelBtn}
+            onClick={() => setBatchMoveMode(null)}
           >
             Cancel (Esc)
           </button>
@@ -1953,6 +2349,9 @@ export default function LeafletGeorefMap(props: Props) {
               <strong>Box Select:</strong> Hold <kbd>Shift</kbd> (or click the box icon) and drag on the map to select multiple estimated photos and fix them simultaneously.
             </li>
             <li>
+              <strong>Move Selection:</strong> Select photos and choose &quot;Move to Point&quot; to place all at the same coordinate, or &quot;Move Relative&quot; to translate all markers preserving relative layout with a live blueprint preview.
+            </li>
+            <li>
               <strong>Groups:</strong> Use Virtual Marker Groups to instantly move single or batch photos to predefined locations or areas.
             </li>
           </ul>
@@ -1995,6 +2394,43 @@ export default function LeafletGeorefMap(props: Props) {
               <Clock size={14} />
               <span>Modify Timestamps ({selectedItems.length})</span>
             </button>
+          )}
+
+          {/* Move to Point & Move Relative Buttons */}
+          {selectedItems.length > 0 && (
+            <>
+              <button
+                className={`${styles.toolBtn} ${styles.movePoint} ${
+                  batchMoveMode === "point" ? styles.active : ""
+                }`}
+                onClick={() => {
+                  setIsRelocating(false);
+                  setIsPickingGroupPos(false);
+                  setBatchMoveMode((prev) => (prev === "point" ? null : "point"));
+                }}
+                disabled={isUpdating}
+                title="Move all selected markers to a single coordinate on the map"
+              >
+                <MapPin size={14} />
+                <span>{batchMoveMode === "point" ? "Click Map to Move" : "Move to Point"}</span>
+              </button>
+
+              <button
+                className={`${styles.toolBtn} ${styles.moveRelative} ${
+                  batchMoveMode === "relative" ? styles.active : ""
+                }`}
+                onClick={() => {
+                  setIsRelocating(false);
+                  setIsPickingGroupPos(false);
+                  setBatchMoveMode((prev) => (prev === "relative" ? null : "relative"));
+                }}
+                disabled={isUpdating}
+                title="Move selection with markers, keeping their relative position to each other (with blueprint preview)"
+              >
+                <Move size={14} />
+                <span>{batchMoveMode === "relative" ? "Click Map to Place" : "Move Relative"}</span>
+              </button>
+            </>
           )}
 
           {estimatedInBounds.length > 0 && (
@@ -2046,6 +2482,7 @@ export default function LeafletGeorefMap(props: Props) {
           <button
             className={`${styles.toolBtn} ${styles.clear}`}
             onClick={() => {
+              setBatchMoveMode(null);
               setBounds(null);
               setSelectedPhotoIds(null);
             }}
@@ -2174,7 +2611,7 @@ export default function LeafletGeorefMap(props: Props) {
               key={it.id}
               center={[lat, lng]}
               radius={isSelected ? 10 : (isBatchSelected ? 8 : 7)}
-              interactive={!isRelocating}
+              interactive={!isRelocating && batchMoveMode === null}
               pathOptions={{
                 color: isSelected ? "#4250af" : (isBatchSelected ? "#2563eb" : color),
                 fillColor: color,
@@ -2183,14 +2620,23 @@ export default function LeafletGeorefMap(props: Props) {
                 weight: isSelected || isBatchSelected ? 3 : 2,
               }}
               eventHandlers={{
-                click: () => {
-                  if (!isRelocating) {
-                    setSelectedImage(it);
+                click: (e) => {
+                  if (!isRelocating && !batchMoveMode) {
+                    if (
+                      e.originalEvent &&
+                      (e.originalEvent.shiftKey ||
+                        e.originalEvent.ctrlKey ||
+                        e.originalEvent.metaKey)
+                    ) {
+                      handleToggleMarkerSelection(it);
+                    } else {
+                      setSelectedImage(it);
+                    }
                   }
                 },
               }}
             >
-              {!isRelocating && (photoItems.length <= 1500 || isSelected) && (
+              {!isRelocating && !batchMoveMode && (photoItems.length <= 1500 || isSelected) && (
                 <Tooltip direction="top" offset={[0, -6]}>
                   <span>{it.name}</span>
                 </Tooltip>
@@ -2199,9 +2645,16 @@ export default function LeafletGeorefMap(props: Props) {
           );
         })}
 
+        <SelectionBlueprint
+          active={batchMoveMode === "relative"}
+          selectedItems={selectedItems}
+          anchor={selectionAnchor}
+        />
+
         <RelocationInteractivityController
           isRelocating={isRelocating}
           isPickingGroupPos={isPickingGroupPos}
+          batchMoveMode={batchMoveMode}
           images={images}
         />
         <RectangleDrawer
@@ -2210,6 +2663,8 @@ export default function LeafletGeorefMap(props: Props) {
           setIsRelocating={setIsRelocating}
           isPickingGroupPos={isPickingGroupPos}
           setIsPickingGroupPos={setIsPickingGroupPos}
+          batchMoveMode={batchMoveMode}
+          setBatchMoveMode={setBatchMoveMode}
           bounds={bounds}
           setBounds={setBounds}
           onMapClick={handleMapClick}
