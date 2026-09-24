@@ -205,13 +205,45 @@ export async function setUserTrackVisibility(
   trackId: string,
   isVisible: boolean
 ): Promise<GpxTrackMetadata[]> {
+  return updateUserTrack(userId, trackId, { isVisible });
+}
+
+/**
+ * Updates properties (name, timeOffsetMs, startTime, endTime, isVisible) for a user's GPX track.
+ */
+export async function updateUserTrack(
+  userId: string | undefined,
+  trackId: string,
+  updates: {
+    name?: string;
+    timeOffsetMs?: number;
+    startTime?: string;
+    endTime?: string;
+    isVisible?: boolean;
+  }
+): Promise<GpxTrackMetadata[]> {
   const tracks = await getUserTracks(userId);
   const track = tracks.find((t) => t.id === trackId);
   if (!track) {
     throw new Error(`GPX track with id "${trackId}" not found`);
   }
 
-  track.isVisible = isVisible;
+  if (typeof updates.name === "string" && updates.name.trim()) {
+    track.name = updates.name.trim();
+  }
+  if (typeof updates.isVisible === "boolean") {
+    track.isVisible = updates.isVisible;
+  }
+  if (typeof updates.timeOffsetMs === "number") {
+    track.timeOffsetMs = updates.timeOffsetMs;
+  }
+  if (typeof updates.startTime === "string") {
+    track.startTime = updates.startTime;
+  }
+  if (typeof updates.endTime === "string") {
+    track.endTime = updates.endTime;
+  }
+
   await writeUserTracks(userId, tracks);
   return tracks;
 }
@@ -245,6 +277,7 @@ export async function deleteUserTrack(userId: string | undefined, trackId: strin
 /**
  * Retrieves parsed points for a single track.
  * If type === "url", downloads live from URL server-side.
+ * Applies timeOffsetMs if present.
  */
 export async function getUserTrackPoints(userId: string | undefined, trackId: string): Promise<GpxPoint[]> {
   const tracks = await getUserTracks(userId);
@@ -253,18 +286,23 @@ export async function getUserTrackPoints(userId: string | undefined, trackId: st
     throw new Error(`GPX track with id "${trackId}" not found`);
   }
 
+  let points: GpxPoint[] = [];
   if (track.type === "file") {
     const filePath = getUserTrackGpxFilePath(userId, trackId);
     const content = await fs.readFile(filePath, "utf-8");
     const parsed = parseGpxXml(content, track.name);
-    return parsed.points;
+    points = parsed.points;
   } else if (track.type === "url" && track.url) {
     const content = await fetchRemoteGpx(track.url);
     const parsed = parseGpxXml(content, track.name);
-    return parsed.points;
+    points = parsed.points;
   }
 
-  return [];
+  if (track.timeOffsetMs) {
+    points = points.map((p) => ({ ...p, time: p.time + track.timeOffsetMs! }));
+  }
+
+  return points;
 }
 
 import { getInternalGpxTrack } from "./internalGpx";
@@ -287,9 +325,13 @@ export async function getVisibleUserTracksWithPoints(userId?: string): Promise<G
         const filePath = getUserTrackGpxFilePath(userId, track.id);
         const content = await fs.readFile(filePath, "utf-8");
         const parsed = parseGpxXml(content, track.name);
+        let points = parsed.points;
+        if (track.timeOffsetMs) {
+          points = points.map((p) => ({ ...p, time: p.time + track.timeOffsetMs! }));
+        }
         results.push({
           ...track,
-          points: parsed.points,
+          points,
         });
       } catch (err) {
         console.error(`[GeoPic GPX] Failed to read local GPX track ${track.id}:`, err);
@@ -299,18 +341,27 @@ export async function getVisibleUserTracksWithPoints(userId?: string): Promise<G
         // Download fresh from URL server-side
         const content = await fetchRemoteGpx(track.url);
         const parsed = parseGpxXml(content, track.name);
+        let points = parsed.points;
+        const offset = track.timeOffsetMs || 0;
+        if (offset) {
+          points = points.map((p) => ({ ...p, time: p.time + offset }));
+        }
 
         track.pointsCount = parsed.pointsCount;
         track.bounds = parsed.bounds;
-        track.startTime = parsed.startTime;
-        track.endTime = parsed.endTime;
+        track.startTime = parsed.startTime
+          ? new Date(new Date(parsed.startTime).getTime() + offset).toISOString()
+          : undefined;
+        track.endTime = parsed.endTime
+          ? new Date(new Date(parsed.endTime).getTime() + offset).toISOString()
+          : undefined;
         track.lastFetchedAt = new Date().toISOString();
         track.fetchError = undefined;
         tracksUpdated = true;
 
         results.push({
           ...track,
-          points: parsed.points,
+          points,
         });
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);

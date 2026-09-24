@@ -5,6 +5,7 @@ import {
   saveUserFileTrack,
   saveUserUrlTrack,
   setUserTrackVisibility,
+  updateUserTrack,
   deleteUserTrack,
   getVisibleUserTracksWithPoints,
   getUserTrackPoints,
@@ -96,18 +97,32 @@ export async function PATCH(req: NextRequest) {
     const userId = ctx.user?.id || (ctx.mode === "apikey" ? "default" : undefined);
 
     const body = await req.json();
-    const { id, isVisible } = body;
+    const { id, isVisible, name, timeOffsetMs, startTime, endTime } = body;
 
     if (!id || typeof id !== "string") {
       return NextResponse.json({ error: "Track ID is required" }, { status: 400 });
     }
 
-    if (typeof isVisible === "boolean") {
-      const tracks = await setUserTrackVisibility(userId, id, isVisible);
-      return NextResponse.json({ success: true, tracks });
+    const updates: {
+      isVisible?: boolean;
+      name?: string;
+      timeOffsetMs?: number;
+      startTime?: string;
+      endTime?: string;
+    } = {};
+
+    if (typeof isVisible === "boolean") updates.isVisible = isVisible;
+    if (typeof name === "string") updates.name = name;
+    if (typeof timeOffsetMs === "number") updates.timeOffsetMs = timeOffsetMs;
+    if (typeof startTime === "string") updates.startTime = startTime;
+    if (typeof endTime === "string") updates.endTime = endTime;
+
+    if (Object.keys(updates).length === 0) {
+      return NextResponse.json({ error: "No valid update operation provided" }, { status: 400 });
     }
 
-    return NextResponse.json({ error: "No valid update operation provided" }, { status: 400 });
+    const tracks = await updateUserTrack(userId, id, updates);
+    return NextResponse.json({ success: true, tracks });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Failed to update GPX track";
     return NextResponse.json({ error: msg }, { status: 400 });

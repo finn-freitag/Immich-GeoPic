@@ -21,6 +21,7 @@ import {
   Maximize2,
   Route,
   Link,
+  Pencil,
 } from "lucide-react";
 
 export type BaseMapModalProps = {
@@ -40,6 +41,7 @@ export type BaseMapModalProps = {
   onAddGpxUrl?: (url: string, name?: string) => Promise<void>;
   onDeleteGpxTrack?: (id: string) => Promise<void>;
   onZoomToGpxTrack?: (track: GpxTrackMetadata) => void;
+  onEditGpxTrack?: (track: GpxTrackMetadata) => void;
   initialTab?: "basemaps" | "gpx";
 };
 
@@ -74,6 +76,7 @@ export default function BaseMapModal({
   onAddGpxUrl,
   onDeleteGpxTrack,
   onZoomToGpxTrack,
+  onEditGpxTrack,
   initialTab = "basemaps",
 }: BaseMapModalProps) {
   const [activeTab, setActiveTab] = useState<"basemaps" | "gpx">(initialTab);
@@ -712,6 +715,17 @@ export default function BaseMapModal({
                           </div>
 
                           <div className={styles.gpxItemActions}>
+                            {onEditGpxTrack && (
+                              <button
+                                type="button"
+                                className={styles.iconBtn}
+                                onClick={() => onEditGpxTrack(track)}
+                                title="Edit track name and timestamp offset"
+                              >
+                                <Pencil size={15} />
+                              </button>
+                            )}
+
                             {track.bounds && onZoomToGpxTrack && (
                               <button
                                 type="button"

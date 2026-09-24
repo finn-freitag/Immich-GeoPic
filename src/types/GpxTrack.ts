@@ -33,6 +33,7 @@ export interface GpxTrackMetadata {
   isInternal?: boolean;
   lastFetchedAt?: string;
   fetchError?: string;
+  timeOffsetMs?: number;
 }
 
 export interface GpxTrackWithPoints extends GpxTrackMetadata {

@@ -45,6 +45,7 @@ import { VirtualGroup } from "@/types/VirtualGroup";
 import BaseMapModal from "@/components/BaseMapModal";
 import GroupsModal from "@/components/GroupsModal";
 import MixedSelectionDialog from "@/components/MixedSelectionDialog";
+import TrackEditMenu from "@/components/TrackEditMenu";
 
 type Props = {
   images: ImageItem[];
@@ -674,6 +675,8 @@ export default function LeafletGeorefMap(props: Props) {
   // GPX Track state
   const [gpxTracks, setGpxTracks] = useState<GpxTrackMetadata[]>([]);
   const [visibleGpxTracks, setVisibleGpxTracks] = useState<GpxTrackWithPoints[]>([]);
+  const [editingGpxTrack, setEditingGpxTrack] = useState<GpxTrackMetadata | null>(null);
+  const rawTrackPointsMapRef = useRef<Map<string, GpxPoint[]>>(new Map());
   const [isDraggingGpx, setIsDraggingGpx] = useState(false);
   const dragCounterRef = useRef(0);
   const [showBaseMapModal, setShowBaseMapModal] = useState(false);
@@ -1026,6 +1029,206 @@ export default function LeafletGeorefMap(props: Props) {
       ]);
       setFlyToBoundsTarget(b);
     }
+  };
+
+  const handleStartEditGpxTrack = async (track: GpxTrackMetadata) => {
+    // 1. Close BaseMapModal so the user has full view of the map and markers
+    setShowBaseMapModal(false);
+
+    // 2. Ensure track is visible so its points and estimated markers appear on map
+    let currentTracks = visibleGpxTracks;
+    let targetTrackWithPoints = currentTracks.find((t) => t.id === track.id);
+
+    if (!targetTrackWithPoints || !track.isVisible) {
+      try {
+        await handleToggleGpxVisibility(track.id, true);
+        const ptsRes = await fetch("/api/gpx?includePoints=true&visibleOnly=true", {
+          headers: getAuthHeaders(),
+        });
+        if (ptsRes.ok) {
+          const data = await ptsRes.json();
+          currentTracks = data.tracks || [];
+          setVisibleGpxTracks(currentTracks);
+          targetTrackWithPoints = currentTracks.find((t) => t.id === track.id);
+        }
+      } catch (err) {
+        console.error("Failed to make track visible for editing:", err);
+      }
+    }
+
+    // 3. If points are missing, fetch points directly
+    if (!targetTrackWithPoints || !targetTrackWithPoints.points) {
+      try {
+        const res = await fetch(`/api/gpx?id=${encodeURIComponent(track.id)}`, {
+          headers: getAuthHeaders(),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const pts = data.points || [];
+          targetTrackWithPoints = {
+            ...track,
+            isVisible: true,
+            points: pts,
+          };
+          setVisibleGpxTracks((prev) => {
+            const filtered = prev.filter((t) => t.id !== track.id);
+            return [...filtered, targetTrackWithPoints!];
+          });
+        }
+      } catch (err) {
+        console.error("Failed to fetch track points for edit:", err);
+      }
+    }
+
+    // 4. Save raw unshifted points in ref to avoid any accumulated drift
+    if (targetTrackWithPoints && targetTrackWithPoints.points) {
+      const currentOffset = track.timeOffsetMs || 0;
+      const rawPoints: GpxPoint[] = targetTrackWithPoints.points.map((p) => ({
+        ...p,
+        time: p.time - currentOffset,
+      }));
+      rawTrackPointsMapRef.current.set(track.id, rawPoints);
+    }
+
+    // 5. Zoom to track bounds if present
+    if (track.bounds) {
+      const b = L.latLngBounds([
+        [track.bounds.minLat, track.bounds.minLng],
+        [track.bounds.maxLat, track.bounds.maxLng],
+      ]);
+      setFlyToBoundsTarget(b);
+    }
+
+    // 6. Set editing track and deselect any photo so the editor has focus
+    setSelectedImage(null);
+    setEditingGpxTrack(track);
+  };
+
+  const handlePreviewGpxTimeOffset = React.useCallback(
+    (trackId: string, previewOffsetMs: number) => {
+      const rawPoints = rawTrackPointsMapRef.current.get(trackId);
+      if (!rawPoints || rawPoints.length === 0) return;
+
+      const shiftedPoints: GpxPoint[] = rawPoints.map((p) => ({
+        ...p,
+        time: p.time + previewOffsetMs,
+      }));
+
+      const newStartTime = new Date(shiftedPoints[0].time).toISOString();
+      const newEndTime = new Date(shiftedPoints[shiftedPoints.length - 1].time).toISOString();
+
+      setVisibleGpxTracks((prev) =>
+        prev.map((t) => {
+          if (t.id !== trackId) return t;
+          return {
+            ...t,
+            points: shiftedPoints,
+            startTime: newStartTime,
+            endTime: newEndTime,
+            timeOffsetMs: previewOffsetMs,
+          };
+        })
+      );
+    },
+    []
+  );
+
+  const handleRevertGpxPreview = React.useCallback(
+    (trackId: string) => {
+      const rawPoints = rawTrackPointsMapRef.current.get(trackId);
+      if (!rawPoints || rawPoints.length === 0) return;
+
+      const savedTrack = gpxTracks.find((t) => t.id === trackId);
+      const savedOffset = savedTrack?.timeOffsetMs || 0;
+
+      const restoredPoints: GpxPoint[] = rawPoints.map((p) => ({
+        ...p,
+        time: p.time + savedOffset,
+      }));
+
+      const newStartTime = new Date(restoredPoints[0].time).toISOString();
+      const newEndTime = new Date(restoredPoints[restoredPoints.length - 1].time).toISOString();
+
+      setVisibleGpxTracks((prev) =>
+        prev.map((t) => {
+          if (t.id !== trackId) return t;
+          return {
+            ...t,
+            points: restoredPoints,
+            startTime: newStartTime,
+            endTime: newEndTime,
+            timeOffsetMs: savedOffset,
+          };
+        })
+      );
+    },
+    [gpxTracks]
+  );
+
+  const handleSaveGpxTrack = async (
+    id: string,
+    updates: {
+      name: string;
+      timeOffsetMs: number;
+      startTime: string;
+      endTime: string;
+    }
+  ) => {
+    const res = await fetch("/api/gpx", {
+      method: "PATCH",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        id,
+        name: updates.name,
+        timeOffsetMs: updates.timeOffsetMs,
+        startTime: updates.startTime,
+        endTime: updates.endTime,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to save track changes");
+    }
+
+    setGpxTracks((prev) =>
+      prev.map((t) =>
+        t.id === id
+          ? {
+              ...t,
+              name: updates.name,
+              timeOffsetMs: updates.timeOffsetMs,
+              startTime: updates.startTime,
+              endTime: updates.endTime,
+            }
+          : t
+      )
+    );
+
+    // Refresh raw points baseline for this track
+    const rawPoints = rawTrackPointsMapRef.current.get(id);
+    if (rawPoints) {
+      const updatedVisiblePoints: GpxPoint[] = rawPoints.map((p) => ({
+        ...p,
+        time: p.time + updates.timeOffsetMs,
+      }));
+      setVisibleGpxTracks((prev) =>
+        prev.map((t) =>
+          t.id === id
+            ? {
+                ...t,
+                name: updates.name,
+                points: updatedVisiblePoints,
+                startTime: updates.startTime,
+                endTime: updates.endTime,
+                timeOffsetMs: updates.timeOffsetMs,
+              }
+            : t
+        )
+      );
+    }
+
+    await loadGpxTracks();
   };
 
   // Groups management and loaders
@@ -1791,7 +1994,7 @@ export default function LeafletGeorefMap(props: Props) {
       </MapContainer>
 
       {/* Photo Inspector Panel */}
-      {selectedImage && (
+      {selectedImage && !editingGpxTrack && (
         <div className={styles.inspectorCard}>
           <div className={styles.cardHeader}>
             <div className={styles.cardTitle}>
@@ -1976,8 +2179,27 @@ export default function LeafletGeorefMap(props: Props) {
         onAddGpxUrl={handleAddGpxUrl}
         onDeleteGpxTrack={handleDeleteGpxTrack}
         onZoomToGpxTrack={handleZoomToGpxTrack}
+        onEditGpxTrack={handleStartEditGpxTrack}
         initialTab={activeModalTab}
       />
+
+      {/* GPX Track Edit Menu (Floating panel for live marker moving) */}
+      {editingGpxTrack && (
+        <TrackEditMenu
+          track={editingGpxTrack}
+          isOpen={!!editingGpxTrack}
+          onClose={() => setEditingGpxTrack(null)}
+          onSave={handleSaveGpxTrack}
+          onPreviewTimeOffset={handlePreviewGpxTimeOffset}
+          onRevertPreview={handleRevertGpxPreview}
+          onZoomToTrack={() => handleZoomToGpxTrack(editingGpxTrack)}
+          onOpenAllTracks={() => {
+            setEditingGpxTrack(null);
+            setActiveModalTab("gpx");
+            setShowBaseMapModal(true);
+          }}
+        />
+      )}
 
       {/* Groups / Virtual Markers Modal */}
       <GroupsModal
