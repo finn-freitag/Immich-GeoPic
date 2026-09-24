@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { updateAssetLocation } from "@/lib/immich";
 import { resolveAuth } from "@/lib/session";
+import { addClearedLocation, removeClearedLocation } from "@/lib/clearedStorage";
+import { removePhotosFromInternalGpx } from "@/lib/internalGpx";
 
 export async function POST(
   req: NextRequest,
@@ -16,18 +18,24 @@ export async function POST(
     const body = await req.json();
     const { coords } = body;
 
-    if (coords !== null && coords !== undefined) {
-      if (
-        typeof coords.lat !== "number" ||
-        typeof coords.lng !== "number" ||
-        Number.isNaN(coords.lat) ||
-        Number.isNaN(coords.lng)
-      ) {
-        return NextResponse.json({ error: "Invalid coordinates" }, { status: 400 });
-      }
+    // Remove coordinates: clear within GeoPic and remove from internal GPX if present
+    if (coords === null || coords === undefined) {
+      await addClearedLocation(ctx.user?.id, id);
+      await removePhotosFromInternalGpx(ctx.user?.id, [id]);
+      return NextResponse.json({ success: true });
     }
 
-    await updateAssetLocation(ctx.auth, id, coords ?? null);
+    if (
+      typeof coords.lat !== "number" ||
+      typeof coords.lng !== "number" ||
+      Number.isNaN(coords.lat) ||
+      Number.isNaN(coords.lng)
+    ) {
+      return NextResponse.json({ error: "Invalid coordinates" }, { status: 400 });
+    }
+
+    await updateAssetLocation(ctx.auth, id, coords);
+    await removeClearedLocation(ctx.user?.id, id);
     return NextResponse.json({ success: true });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to update location";

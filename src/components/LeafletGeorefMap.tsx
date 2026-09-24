@@ -1334,11 +1334,22 @@ export default function LeafletGeorefMap(props: Props) {
       const updated = images.map((img) => {
         if (img.id === selectedImage.id) {
           const { estimated, estCoords, ...clean } = img as MapDisplayItem;
-          return { ...clean, coords: undefined };
+          return { ...clean, coords: undefined, city: undefined, country: undefined };
         }
         return img;
       });
       updateImages(updated);
+      setSelectedImage((prev) => {
+        if (!prev || prev.id !== selectedImage.id) return prev;
+        const { estimated, estCoords, ...clean } = prev;
+        return {
+          ...clean,
+          coords: undefined,
+          city: undefined,
+          country: undefined,
+          estimated: true,
+        };
+      });
     } catch (err) {
       console.error("Failed to remove coordinates:", err);
     } finally {
