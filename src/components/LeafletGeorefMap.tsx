@@ -942,9 +942,14 @@ export default function LeafletGeorefMap(props: Props) {
     loadGpxTracks();
   }, [loadGpxTracks]);
 
-  const handleUploadGpxFile = async (file: File) => {
+  const handleUploadGpxFile = async (fileOrFiles: File | File[]) => {
+    const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
+    if (files.length === 0) return;
+
     const formData = new FormData();
-    formData.append("file", file);
+    for (const file of files) {
+      formData.append("files", file);
+    }
     const token =
       props.sessionToken ||
       (typeof window !== "undefined"
@@ -963,7 +968,7 @@ export default function LeafletGeorefMap(props: Props) {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || "Failed to upload GPX file");
+      throw new Error(err.error || "Failed to upload GPX file(s)");
     }
 
     await loadGpxTracks();
@@ -1221,20 +1226,24 @@ export default function LeafletGeorefMap(props: Props) {
     if (showBaseMapModal || showGroupsModal) return;
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      for (let i = 0; i < e.dataTransfer.files.length; i++) {
-        const file = e.dataTransfer.files[i];
-        if (file.name.toLowerCase().endsWith(".gpx")) {
-          await handleUploadGpxFile(file);
+      const gpxFiles = Array.from(e.dataTransfer.files).filter((file) =>
+        file.name.toLowerCase().endsWith(".gpx")
+      );
+      if (gpxFiles.length > 0) {
+        try {
+          await handleUploadGpxFile(gpxFiles);
+        } catch (err) {
+          console.error("Map GPX drop upload failed:", err);
         }
       }
     }
   };
 
   const handleQuickFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    if (files.length > 0) {
       try {
-        await handleUploadGpxFile(file);
+        await handleUploadGpxFile(files);
       } catch (err) {
         console.error("Quick GPX upload failed:", err);
       } finally {
@@ -1520,6 +1529,7 @@ export default function LeafletGeorefMap(props: Props) {
           type="file"
           ref={gpxFileInputRef}
           accept=".gpx"
+          multiple
           style={{ display: "none" }}
           onChange={handleQuickFileInputChange}
         />
