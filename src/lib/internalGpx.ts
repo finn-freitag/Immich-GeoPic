@@ -260,3 +260,46 @@ export async function removePhotosFromInternalGpx(
 
   return getInternalGpxTrack(userId);
 }
+
+/**
+ * Updates the timestamps of specific photos in internal_estimated.gpx.
+ */
+export async function updatePhotosTimestampInInternalGpx(
+  userId: string | undefined,
+  updates: Array<{ id: string; timestamp: string }>
+): Promise<void> {
+  if (!updates || updates.length === 0) return;
+
+  const updateMap = new Map<string, string>();
+  for (const u of updates) {
+    updateMap.set(u.id, u.timestamp);
+  }
+
+  const existingEntries = await readInternalGpxEntries(userId);
+  let changed = false;
+  const updatedEntries = existingEntries.map((e) => {
+    if (updateMap.has(e.photoId)) {
+      changed = true;
+      return { ...e, timestamp: updateMap.get(e.photoId)! };
+    }
+    return e;
+  });
+
+  if (!changed) return;
+
+  const gpxXml = serializeEntriesToGpx(updatedEntries);
+  const filePath = getInternalGpxFilePath(userId);
+  const tempPath = `${filePath}.${crypto.randomUUID()}.tmp`;
+
+  try {
+    await fs.writeFile(tempPath, gpxXml, "utf-8");
+    await fs.rename(tempPath, filePath);
+  } catch (err: unknown) {
+    try {
+      await fs.unlink(tempPath);
+    } catch {
+      // ignore
+    }
+  }
+}
+

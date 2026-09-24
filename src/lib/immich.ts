@@ -429,3 +429,99 @@ export async function bulkUpdateLocations(
 
   return { success, failed };
 }
+
+export async function updateAssetDateTime(
+  auth: ImmichAuth,
+  assetId: string,
+  dateTimeOriginal: string
+): Promise<void> {
+  const baseUrl = getImmichUrl();
+
+  // Try bulk update endpoint PUT /api/assets first
+  const bulkRes = await fetch(`${baseUrl}/api/assets`, {
+    method: "PUT",
+    headers: {
+      ...getAuthHeaders(auth),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      ids: [assetId],
+      dateTimeOriginal,
+    }),
+  });
+
+  if (bulkRes.ok) return;
+
+  // Fallback to single asset endpoint PUT /api/assets/:id
+  const singleRes = await fetch(`${baseUrl}/api/assets/${assetId}`, {
+    method: "PUT",
+    headers: {
+      ...getAuthHeaders(auth),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      dateTimeOriginal,
+    }),
+  });
+
+  if (!singleRes.ok) {
+    const errorText = await singleRes.text();
+    throw new Error(`Failed to update asset timestamp (${singleRes.status}): ${errorText}`);
+  }
+}
+
+export async function bulkUpdateDateTimes(
+  auth: ImmichAuth,
+  updates: Array<{ id: string; dateTimeOriginal: string }>
+): Promise<{ success: number; failed: number }> {
+  let success = 0;
+  let failed = 0;
+
+  // If all updates share the exact same dateTimeOriginal, try a single bulk request first
+  const allSameTime =
+    updates.length > 1 &&
+    updates.every((u) => u.dateTimeOriginal === updates[0].dateTimeOriginal);
+
+  if (allSameTime) {
+    try {
+      const baseUrl = getImmichUrl();
+      const bulkRes = await fetch(`${baseUrl}/api/assets`, {
+        method: "PUT",
+        headers: {
+          ...getAuthHeaders(auth),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ids: updates.map((u) => u.id),
+          dateTimeOriginal: updates[0].dateTimeOriginal,
+        }),
+      });
+
+      if (bulkRes.ok) {
+        return { success: updates.length, failed: 0 };
+      }
+    } catch {
+      // Fallback to batching below
+    }
+  }
+
+  // Concurrently update with small batches
+  const batchSize = 5;
+  for (let i = 0; i < updates.length; i += batchSize) {
+    const batch = updates.slice(i, i + batchSize);
+    await Promise.all(
+      batch.map(async (u) => {
+        try {
+          await updateAssetDateTime(auth, u.id, u.dateTimeOriginal);
+          success++;
+        } catch (err) {
+          console.error(`Failed to update asset timestamp ${u.id}:`, err);
+          failed++;
+        }
+      })
+    );
+  }
+
+  return { success, failed };
+}
+

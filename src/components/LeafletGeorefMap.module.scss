@@ -244,6 +244,25 @@
     color: var(--text-primary);
     word-break: break-all;
   }
+
+  .editTimestampIconBtn {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px 5px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+
+    &:hover {
+      color: var(--primary);
+      background-color: var(--surface-hover);
+    }
+  }
 }
 
 .cardActions {
@@ -372,6 +391,18 @@
   }
 
   &.filter {
+    background-color: var(--primary-light);
+    border-color: rgba(66, 80, 175, 0.4);
+    color: var(--primary);
+
+    &:hover {
+      background-color: var(--primary);
+      border-color: var(--primary);
+      color: #ffffff;
+    }
+  }
+
+  &.timestamp {
     background-color: var(--primary-light);
     border-color: rgba(66, 80, 175, 0.4);
     color: var(--primary);

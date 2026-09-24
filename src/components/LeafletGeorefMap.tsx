@@ -41,6 +41,8 @@ import {
   BookmarkPlus,
   Filter,
   Camera,
+  Clock,
+  Pencil,
 } from "lucide-react";
 import { BaseMap, BaseMapPreset, DEFAULT_BASEMAP, BASEMAP_PRESETS } from "@/types/BaseMap";
 import { VirtualGroup } from "@/types/VirtualGroup";
@@ -49,6 +51,7 @@ import GroupsModal from "@/components/GroupsModal";
 import MixedSelectionDialog from "@/components/MixedSelectionDialog";
 import TrackEditMenu from "@/components/TrackEditMenu";
 import SelectionBuilderModal from "@/components/SelectionBuilderModal";
+import TimestampModal from "@/components/TimestampModal";
 
 type Props = {
   images: ImageItem[];
@@ -697,6 +700,7 @@ export default function LeafletGeorefMap(props: Props) {
   const [showBaseMapModal, setShowBaseMapModal] = useState(false);
   const [activeModalTab, setActiveModalTab] = useState<"basemaps" | "gpx">("basemaps");
   const [flyToBoundsTarget, setFlyToBoundsTarget] = useState<LatLngBounds | null>(null);
+  const [timestampModalPhotos, setTimestampModalPhotos] = useState<ImageItem[] | null>(null);
   const gpxFileInputRef = useRef<HTMLInputElement>(null);
 
   // Sync state if props change from outside
@@ -1679,6 +1683,35 @@ export default function LeafletGeorefMap(props: Props) {
     }
   };
 
+  // Handle timestamp updates applied from TimestampModal
+  const handleTimestampsUpdated = (updates: Array<{ id: string; timestamp: string }>) => {
+    const updateMap = new Map<string, string>();
+    for (const u of updates) {
+      updateMap.set(u.id, u.timestamp);
+    }
+
+    const updated = images.map((img) => {
+      if (updateMap.has(img.id)) {
+        const newTime = updateMap.get(img.id)!;
+        return {
+          ...img,
+          timestamp: newTime,
+          localDateTime: newTime,
+        };
+      }
+      return img;
+    });
+
+    updateImages(updated);
+
+    if (selectedImage && updateMap.has(selectedImage.id)) {
+      const newTime = updateMap.get(selectedImage.id)!;
+      setSelectedImage((prev) =>
+        prev ? { ...prev, timestamp: newTime, localDateTime: newTime } : null
+      );
+    }
+  };
+
   // Apply filtered selection from SelectionBuilderModal
   const handleApplySelectionBuilder = (matchingIds: string[]) => {
     if (matchingIds.length === 0) return;
@@ -1950,6 +1983,19 @@ export default function LeafletGeorefMap(props: Props) {
             <Filter size={14} />
             <span>Refine Selection</span>
           </button>
+
+          {/* Modify Timestamps for selection */}
+          {selectedItems.length > 0 && (
+            <button
+              className={`${styles.toolBtn} ${styles.timestamp}`}
+              onClick={() => setTimestampModalPhotos(selectedItems)}
+              disabled={isUpdating}
+              title={`Modify timestamp for ${selectedItems.length} photos`}
+            >
+              <Clock size={14} />
+              <span>Modify Timestamps ({selectedItems.length})</span>
+            </button>
+          )}
 
           {estimatedInBounds.length > 0 && (
             <button
@@ -2261,6 +2307,14 @@ export default function LeafletGeorefMap(props: Props) {
                   timeStyle: "short",
                 })}
               </span>
+              <button
+                type="button"
+                className={styles.editTimestampIconBtn}
+                onClick={() => setTimestampModalPhotos([selectedImage])}
+                title="Modify Timestamp"
+              >
+                <Pencil size={12} />
+              </button>
             </div>
             <div className={styles.metaRow}>
               <MapPin size={14} />
@@ -2296,6 +2350,16 @@ export default function LeafletGeorefMap(props: Props) {
             >
               <Compass size={15} />
               <span>Relocate Marker</span>
+            </button>
+
+            <button
+              className={`${styles.actionBtn} ${styles.outline}`}
+              onClick={() => setTimestampModalPhotos([selectedImage])}
+              disabled={isUpdating}
+              title="Modify Photo Timestamp"
+            >
+              <Clock size={15} />
+              <span>Modify Timestamp</span>
             </button>
 
             {!selectedImage.coords && selectedImage.estimated && selectedImage.estCoords && (
@@ -2450,6 +2514,17 @@ export default function LeafletGeorefMap(props: Props) {
         topBarStartDate={props.topBarStartDate}
         topBarEndDate={props.topBarEndDate}
       />
+
+      {/* Modify Timestamp Modal */}
+      {timestampModalPhotos && (
+        <TimestampModal
+          isOpen={Boolean(timestampModalPhotos)}
+          onClose={() => setTimestampModalPhotos(null)}
+          photos={timestampModalPhotos}
+          sessionToken={props.sessionToken}
+          onTimestampsUpdated={handleTimestampsUpdated}
+        />
+      )}
 
       {/* Large Image Lightbox Modal */}
       {isImageEnlarged && selectedImage && (
