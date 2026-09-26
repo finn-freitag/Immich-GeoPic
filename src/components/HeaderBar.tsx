@@ -12,6 +12,7 @@ import {
   AlertCircle,
   XCircle,
   Layers,
+  Settings,
 } from "lucide-react";
 
 export type TimespanPreset = "1m" | "3m" | "6m" | "1y" | "all" | "custom";
@@ -37,6 +38,7 @@ export type HeaderBarProps = {
   isLoading: boolean;
   onRefresh: () => void;
   onZoomCategory?: (category: "all" | "geotagged" | "unreferenced" | "removed") => void;
+  onOpenSettings?: () => void;
 };
 
 export default function HeaderBar({
@@ -55,6 +57,7 @@ export default function HeaderBar({
   isLoading,
   onRefresh,
   onZoomCategory,
+  onOpenSettings,
 }: HeaderBarProps) {
   const [profileImgError, setProfileImgError] = useState(false);
 
@@ -186,6 +189,16 @@ export default function HeaderBar({
 
       {/* Right Section: User & Logout */}
       <div className={styles.rightSection}>
+        {onOpenSettings && (
+          <button
+            type="button"
+            className={styles.settingsBtn}
+            onClick={onOpenSettings}
+            title="Settings & Timezone Preferences"
+          >
+            <Settings size={16} />
+          </button>
+        )}
         <div className={styles.userCard}>
           {user && !profileImgError ? (
             <img

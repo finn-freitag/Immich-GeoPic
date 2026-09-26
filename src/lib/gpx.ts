@@ -22,9 +22,14 @@ export function parseGpxTime(rawTime: string): number {
   // Fix timezone offset with only hour, e.g. +02 -> +02:00
   normalized = normalized.replace(/([+-])(\d{2})$/, "$1$2:00");
 
-  const parsed = Date.parse(normalized);
-  if (!Number.isNaN(parsed) && parsed > 0) {
-    return parsed;
+  // Only use Date.parse directly if string contains an explicit UTC 'Z' or offset indicator.
+  // Otherwise, strings like "2024-06-06T13:44:53" would be parsed by Date.parse in the
+  // local browser timezone instead of the GPX-mandated UTC standard!
+  if (/([Zz]|[+-]\d{2}:?\d{2})$/.test(normalized)) {
+    const parsed = Date.parse(normalized);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      return parsed;
+    }
   }
 
   // Fallback explicit regex parsing for non-standard formats

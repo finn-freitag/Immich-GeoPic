@@ -511,15 +511,17 @@ export default function TimestampModal({
                   type="button"
                   className={styles.chipBtn}
                   onClick={() => applyQuickOffsetDelta(3600)}
+                  title="Advance 1 hour (compensate for unadjusted Daylight Saving Summer Time)"
                 >
-                  +1 Hour
+                  +1 Hour (DST Summer)
                 </button>
                 <button
                   type="button"
                   className={styles.chipBtn}
                   onClick={() => applyQuickOffsetDelta(-3600)}
+                  title="Retard 1 hour (compensate for unadjusted Standard Winter Time)"
                 >
-                  -1 Hour
+                  -1 Hour (DST Winter)
                 </button>
                 <button
                   type="button"

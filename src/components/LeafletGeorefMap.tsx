@@ -45,9 +45,11 @@ import {
   Clock,
   Pencil,
   Move,
+  Settings,
 } from "lucide-react";
 import { BaseMap, BaseMapPreset, DEFAULT_BASEMAP, BASEMAP_PRESETS } from "@/types/BaseMap";
 import { VirtualGroup } from "@/types/VirtualGroup";
+import { AppSettings, DEFAULT_APP_SETTINGS } from "@/types/AppSettings";
 import BaseMapModal from "@/components/BaseMapModal";
 import GroupsModal from "@/components/GroupsModal";
 import MixedSelectionDialog from "@/components/MixedSelectionDialog";
@@ -55,6 +57,7 @@ import TrackEditMenu from "@/components/TrackEditMenu";
 import SelectionBuilderModal from "@/components/SelectionBuilderModal";
 import TimestampModal from "@/components/TimestampModal";
 import SelectionGallery from "@/components/SelectionGallery";
+import SettingsModal from "@/components/SettingsModal";
 
 type Props = {
   images: ImageItem[];
@@ -68,6 +71,8 @@ type Props = {
   } | null;
   topBarStartDate?: string;
   topBarEndDate?: string;
+  isSettingsOpen?: boolean;
+  onSettingsClose?: () => void;
 };
 
 export type MapDisplayItem = ImageItem & {
@@ -135,7 +140,8 @@ function deterministicOffset(id: string, salt: number, scale = 0.001): number {
  */
 function computeEstimatedPositions(
   images: ImageItem[],
-  visibleGpxTracks: GpxTrackWithPoints[] = []
+  visibleGpxTracks: GpxTrackWithPoints[] = [],
+  settings?: Partial<AppSettings>
 ): MapDisplayItem[] {
   if (!Array.isArray(images)) images = [];
 
@@ -159,7 +165,7 @@ function computeEstimatedPositions(
   if (images.length === 0 && gpxItems.length === 0) return [];
 
   // 2. Determine fallback timezone for unlocated photos
-  // Inferred from GPX points or geotagged photos
+  // Inferred from GPX points, geotagged photos, or user settings
   let fallbackTz: string | null = null;
   if (gpxItems.length > 0 && gpxItems[0].coords) {
     fallbackTz = getTimezoneForCoords(gpxItems[0].coords.lat, gpxItems[0].coords.lng);
@@ -170,11 +176,14 @@ function computeEstimatedPositions(
       fallbackTz = getTimezoneForCoords(geo.coords.lat, geo.coords.lng);
     }
   }
+  if (!fallbackTz && settings?.fallbackTimezone) {
+    fallbackTz = settings.fallbackTimezone;
+  }
 
   // 3. Prepare photo items with resolved times
   const photoItems: MapDisplayItem[] = images.map((img) => {
     const { estimated, estCoords, ...clean } = img as MapDisplayItem;
-    const resolvedTime = resolvePhotoTimeMs(clean, fallbackTz);
+    const resolvedTime = resolvePhotoTimeMs(clean, fallbackTz, settings);
     return {
       ...clean,
       resolvedTime,
@@ -881,6 +890,8 @@ export default function LeafletGeorefMap(props: Props) {
   const [activeModalTab, setActiveModalTab] = useState<"basemaps" | "gpx">("basemaps");
   const [flyToBoundsTarget, setFlyToBoundsTarget] = useState<LatLngBounds | null>(null);
   const [timestampModalPhotos, setTimestampModalPhotos] = useState<ImageItem[] | null>(null);
+  const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
   const gpxFileInputRef = useRef<HTMLInputElement>(null);
 
   // Sync state if props change from outside
@@ -896,8 +907,8 @@ export default function LeafletGeorefMap(props: Props) {
 
   // Compute unified positions: photos and GPX trackpoints are sequenced together
   const computed = useMemo(() => {
-    return computeEstimatedPositions(images, visibleGpxTracks);
-  }, [images, visibleGpxTracks]);
+    return computeEstimatedPositions(images, visibleGpxTracks, appSettings);
+  }, [images, visibleGpxTracks, appSettings]);
 
   // Photo-only items for markers, inspector, and selection
   const photoItems = useMemo(() => {
@@ -1116,6 +1127,49 @@ export default function LeafletGeorefMap(props: Props) {
       isMounted = false;
     };
   }, [props.sessionToken]);
+
+  // Load app settings
+  useEffect(() => {
+    let isMounted = true;
+    async function loadSettings() {
+      try {
+        const res = await fetch("/api/settings", {
+          headers: getAuthHeaders(),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.settings) {
+            setAppSettings(data.settings);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load app settings:", err);
+      }
+    }
+    loadSettings();
+    return () => {
+      isMounted = false;
+    };
+  }, [props.sessionToken]);
+
+  const handleSaveAppSettings = async (newSettings: AppSettings) => {
+    setAppSettings(newSettings);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(newSettings),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.settings) {
+          setAppSettings(data.settings);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to save app settings:", err);
+    }
+  };
 
   const activeBaseMap = useMemo(() => {
     return (
@@ -2414,6 +2468,13 @@ export default function LeafletGeorefMap(props: Props) {
           <Layers size={18} />
         </button>
         <button
+          className={`${styles.mapControlBtn} ${showSettingsModal || props.isSettingsOpen ? styles.active : ""}`}
+          title="Settings & Timezone Preferences"
+          onClick={() => setShowSettingsModal(true)}
+        >
+          <Settings size={18} />
+        </button>
+        <button
           className={`${styles.mapControlBtn} ${showHelp ? styles.active : ""}`}
           title="How it works"
           onClick={() => setShowHelp((prev) => !prev)}
@@ -2611,14 +2672,14 @@ export default function LeafletGeorefMap(props: Props) {
         />
 
         {/* Route connecting all photo markers and GPX tracks with one continuous polyline */}
-        {continuousPolylinePositions.length >= 2 && (
+        {appSettings.showContinuousPolyline && continuousPolylinePositions.length >= 2 && (
           <Polyline
             positions={continuousPolylinePositions}
             interactive={false}
             pathOptions={{
-              color: "#4250af",
+              color: appSettings.polylineColor || "#4250af",
               weight: 3,
-              opacity: 0.7,
+              opacity: 0.75,
               dashArray: "4, 6",
             }}
             smoothFactor={1.5}
@@ -2739,7 +2800,7 @@ export default function LeafletGeorefMap(props: Props) {
                 },
               }}
             >
-              {!isRelocating && !batchMoveMode && (photoItems.length <= 1500 || isSelected) && (
+              {!isRelocating && !batchMoveMode && (photoItems.length <= (appSettings.markerTooltipThreshold || 1500) || isSelected) && (
                 <Tooltip direction="top" offset={[0, -6]}>
                   <span>{it.name}</span>
                 </Tooltip>
@@ -3155,6 +3216,18 @@ export default function LeafletGeorefMap(props: Props) {
           </div>
         </div>
       )}
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={showSettingsModal || Boolean(props.isSettingsOpen)}
+        onClose={() => {
+          setShowSettingsModal(false);
+          props.onSettingsClose?.();
+        }}
+        settings={appSettings}
+        onSaveSettings={handleSaveAppSettings}
+        sessionToken={props.sessionToken}
+      />
     </div>
   );
 }

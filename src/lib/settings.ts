@@ -3,12 +3,20 @@ import path from "path";
 import crypto from "crypto";
 import { BaseMap, BaseMapPreset, DEFAULT_BASEMAP, BASEMAP_PRESETS } from "@/types/BaseMap";
 
+import { AppSettings, DEFAULT_APP_SETTINGS } from "@/types/AppSettings";
+
 export { DEFAULT_BASEMAP, BASEMAP_PRESETS };
+
+interface UserSettingEntry {
+  selectedBaseMapId?: string;
+  appSettings?: Partial<AppSettings>;
+}
 
 interface SettingsData {
   baseMaps: BaseMap[];
-  userSettings: Record<string, { selectedBaseMapId: string }>;
+  userSettings: Record<string, UserSettingEntry>;
   defaultSelectedBaseMapId: string;
+  defaultAppSettings?: Partial<AppSettings>;
 }
 
 export function getDataDir(): string {
@@ -37,6 +45,7 @@ async function readSettings(): Promise<SettingsData> {
       baseMaps,
       userSettings: parsed.userSettings && typeof parsed.userSettings === "object" ? parsed.userSettings : {},
       defaultSelectedBaseMapId: parsed.defaultSelectedBaseMapId || DEFAULT_BASEMAP.id,
+      defaultAppSettings: parsed.defaultAppSettings && typeof parsed.defaultAppSettings === "object" ? parsed.defaultAppSettings : {},
     };
   } catch {
     // If file doesn't exist or is invalid, return default state
@@ -44,6 +53,7 @@ async function readSettings(): Promise<SettingsData> {
       baseMaps: [DEFAULT_BASEMAP],
       userSettings: {},
       defaultSelectedBaseMapId: DEFAULT_BASEMAP.id,
+      defaultAppSettings: {},
     };
   }
 }
@@ -205,3 +215,48 @@ export async function deleteCustomBaseMap(
 
   return getUserBaseMaps(userId);
 }
+
+export async function getAppSettings(userId?: string): Promise<AppSettings> {
+  const settings = await readSettings();
+  const userKey = userId || "default";
+  const userApp = settings.userSettings[userKey]?.appSettings || {};
+  const defaultApp = settings.defaultAppSettings || {};
+
+  return {
+    ...DEFAULT_APP_SETTINGS,
+    ...defaultApp,
+    ...userApp,
+  };
+}
+
+export async function updateAppSettings(
+  userId: string | undefined,
+  partialSettings: Partial<AppSettings>
+): Promise<AppSettings> {
+  const settings = await readSettings();
+  const userKey = userId || "default";
+
+  if (!settings.userSettings[userKey]) {
+    settings.userSettings[userKey] = {};
+  }
+
+  const current = settings.userSettings[userKey].appSettings || {};
+  const updated = {
+    ...current,
+    ...partialSettings,
+  };
+
+  settings.userSettings[userKey].appSettings = updated;
+
+  if (!userId || userKey === "default") {
+    settings.defaultAppSettings = {
+      ...(settings.defaultAppSettings || {}),
+      ...partialSettings,
+    };
+  }
+
+  await writeSettings(settings);
+
+  return getAppSettings(userId);
+}
+

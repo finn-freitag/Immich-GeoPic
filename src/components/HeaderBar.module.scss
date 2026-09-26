@@ -225,8 +225,28 @@
 .rightSection {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: fit-content;
+}
+
+.settingsBtn {
+  background: var(--background);
+  border: 1px solid var(--surface-border);
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &:hover {
+    background-color: var(--surface-hover);
+    color: var(--text-primary);
+    border-color: rgba(66, 80, 175, 0.4);
+  }
 }
 
 .userCard {

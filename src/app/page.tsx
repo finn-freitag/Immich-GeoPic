@@ -22,6 +22,7 @@ export default function Home() {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [timespanPreset, setTimespanPreset] = useState<TimespanPreset>("6m");
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [zoomCategoryTarget, setZoomCategoryTarget] = useState<{
     category: "all" | "geotagged" | "unreferenced" | "removed";
     timestamp: number;
@@ -287,6 +288,7 @@ export default function Home() {
         onZoomCategory={(category) =>
           setZoomCategoryTarget({ category, timestamp: Date.now() })
         }
+        onOpenSettings={() => setIsSettingsOpen(true)}
       />
 
       {/* Main Map Content */}
@@ -305,6 +307,8 @@ export default function Home() {
           zoomCategoryTarget={zoomCategoryTarget}
           topBarStartDate={startDate}
           topBarEndDate={endDate}
+          isSettingsOpen={isSettingsOpen}
+          onSettingsClose={() => setIsSettingsOpen(false)}
         />
 
         {isLoading && (
