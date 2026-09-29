@@ -2,6 +2,30 @@ import tzlookup from "@photostructure/tz-lookup";
 import { parseGpxTime } from "./gpx";
 import { AppSettings, DEFAULT_APP_SETTINGS } from "@/types/AppSettings";
 
+const dtfCache = new Map<string, Intl.DateTimeFormat | null>();
+
+export function getCachedDateTimeFormat(
+  locale: string | undefined,
+  timeZone: string,
+  options?: Intl.DateTimeFormatOptions
+): Intl.DateTimeFormat | null {
+  const loc = locale || "default";
+  const key = `${loc}_${timeZone}_${options ? JSON.stringify(options) : ""}`;
+  if (dtfCache.has(key)) {
+    return dtfCache.get(key)!;
+  }
+  try {
+    const fmt = new Intl.DateTimeFormat(locale, { ...options, timeZone });
+    dtfCache.set(key, fmt);
+    return fmt;
+  } catch {
+    dtfCache.set(key, null);
+    return null;
+  }
+}
+
+const tzCache = new Map<string, string | null>();
+
 /**
  * Returns the IANA timezone string for a given coordinate pair (lat, lng).
  * Example: (50.9693, 8.9672) -> "Europe/Berlin"
@@ -14,7 +38,14 @@ export function getTimezoneForCoords(lat: number, lng: number): string | null {
     if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
       return null;
     }
-    return tzlookup(lat, lng);
+    // Quantize coordinates to 3 decimals (~110m) for fast cache lookups
+    const key = `${lat.toFixed(3)},${lng.toFixed(3)}`;
+    if (tzCache.has(key)) {
+      return tzCache.get(key)!;
+    }
+    const result = tzlookup(lat, lng);
+    tzCache.set(key, result);
+    return result;
   } catch {
     return null;
   }
@@ -39,8 +70,7 @@ export function parseOffsetMs(tzStr: string | null | undefined): number | null {
  */
 export function getTimezoneOffsetForInstant(instantMs: number, timeZone: string): number {
   try {
-    const formatter = new Intl.DateTimeFormat("en-US", {
-      timeZone,
+    const formatter = getCachedDateTimeFormat("en-US", timeZone, {
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -49,6 +79,7 @@ export function getTimezoneOffsetForInstant(instantMs: number, timeZone: string)
       second: "2-digit",
       hour12: false,
     });
+    if (!formatter) return 0;
     const parts = formatter.formatToParts(new Date(instantMs));
     const p: Record<string, number> = {};
     for (const part of parts) {
@@ -64,6 +95,8 @@ export function getTimezoneOffsetForInstant(instantMs: number, timeZone: string)
   }
 }
 
+const yearDstCache = new Map<string, { standardOffset: number; daylightOffset: number; hasDst: boolean }>();
+
 /**
  * Evaluates whether Daylight Saving Time (DST) is active at a given instant in an IANA timezone,
  * and returns the standard and daylight offset amounts.
@@ -71,14 +104,20 @@ export function getTimezoneOffsetForInstant(instantMs: number, timeZone: string)
 export function getDstInfo(instantMs: number, timeZone: string) {
   const d = new Date(instantMs);
   const y = d.getUTCFullYear();
+  const yearKey = `${y}_${timeZone}`;
+  let yearInfo = yearDstCache.get(yearKey);
+  if (!yearInfo) {
+    const offsetJan = getTimezoneOffsetForInstant(Date.UTC(y, 0, 15, 12, 0, 0), timeZone);
+    const offsetJul = getTimezoneOffsetForInstant(Date.UTC(y, 6, 15, 12, 0, 0), timeZone);
+    const standardOffset = Math.min(offsetJan, offsetJul);
+    const daylightOffset = Math.max(offsetJan, offsetJul);
+    const hasDst = standardOffset !== daylightOffset;
+    yearInfo = { standardOffset, daylightOffset, hasDst };
+    yearDstCache.set(yearKey, yearInfo);
+  }
   const offsetNow = getTimezoneOffsetForInstant(instantMs, timeZone);
-  const offsetJan = getTimezoneOffsetForInstant(Date.UTC(y, 0, 15, 12, 0, 0), timeZone);
-  const offsetJul = getTimezoneOffsetForInstant(Date.UTC(y, 6, 15, 12, 0, 0), timeZone);
-  const standardOffset = Math.min(offsetJan, offsetJul);
-  const daylightOffset = Math.max(offsetJan, offsetJul);
-  const hasDst = standardOffset !== daylightOffset;
-  const isDstActive = hasDst && offsetNow === daylightOffset;
-  return { offsetNow, standardOffset, daylightOffset, hasDst, isDstActive };
+  const isDstActive = yearInfo.hasDst && offsetNow === yearInfo.daylightOffset;
+  return { offsetNow, ...yearInfo, isDstActive };
 }
 
 /**
@@ -117,19 +156,16 @@ export function parseLocalDateInTzToUtcMs(localDateTimeStr: string, timeZone: st
     return parseGpxTime(`${rawDigits}${timeZone}`);
   }
 
-  let formatter: Intl.DateTimeFormat;
-  try {
-    formatter = new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    });
-  } catch {
+  const formatter = getCachedDateTimeFormat("en-US", timeZone, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  if (!formatter) {
     // If timezone is invalid, fallback to UTC or standard parse
     return guessUtc;
   }
@@ -247,4 +283,94 @@ export function resolvePhotoTimeMs(
   // 6. Fallback standard parse
   const parsed = Date.parse(trimmed);
   return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+export interface PhotoDisplayTimeParams {
+  timestamp: string;
+  localDateTime?: string | null;
+  timeZone?: string | null;
+  coords?: { lat: number; lng: number } | null;
+  estCoords?: { lat: number; lng: number } | null;
+  resolvedTime?: number | null;
+}
+
+/**
+ * Formats a photo's capture date and time for display in the UI.
+ *
+ * Rules:
+ * 1. The photo must always display in the local capture time (wall-clock time)
+ *    where the photo was taken (e.g. 08:20 if taken at 08:20), matching what
+ *    the camera and Immich UI display.
+ * 2. If the photo has a naive localDateTime string (e.g. "2026-06-26 08:20:16"
+ *    or "2026-06-26T08:20:16"), that represents the local wall-clock time directly.
+ *    We format these date components without browser timezone shifts.
+ * 3. If localDateTime is not available, but the photo has a resolvedTime (or timestamp)
+ *    and a known timezone (from coords, EXIF timezone, or fallback/GPX timezone):
+ *    Format the UTC instant in that target timezone.
+ * 4. Fallback: Parse the timestamp and format using toLocaleString.
+ */
+export function formatPhotoDisplayDate(
+  photo: PhotoDisplayTimeParams,
+  options: Intl.DateTimeFormatOptions = {
+    dateStyle: "medium",
+    timeStyle: "short",
+  },
+  fallbackTimezone?: string | null,
+  locale?: string
+): string {
+  if (!photo) return "";
+
+  // 1. If photo has a localDateTime string, it is the authoritative wall-clock time from EXIF / Immich
+  if (photo.localDateTime && typeof photo.localDateTime === "string") {
+    const trimmed = photo.localDateTime.trim();
+    const match = trimmed.match(/^(\d{4})[-:/](\d{2})[-:/](\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+    if (match) {
+      const year = parseInt(match[1], 10);
+      const month = parseInt(match[2], 10) - 1;
+      const day = parseInt(match[3], 10);
+      const hour = parseInt(match[4], 10);
+      const minute = parseInt(match[5], 10);
+      const second = parseInt(match[6], 10);
+      // Construct a Date with local components matching the wall-clock time
+      const localDate = new Date(year, month, day, hour, minute, second);
+      if (!Number.isNaN(localDate.getTime())) {
+        return localDate.toLocaleString(locale, options);
+      }
+    }
+  }
+
+  // 2. If resolvedTime is available and we know the target timezone (coords, exif, or fallback)
+  const coords = photo.coords || photo.estCoords;
+  let targetTz: string | null = null;
+  if (photo.timeZone && !photo.timeZone.startsWith("+") && !photo.timeZone.startsWith("-")) {
+    targetTz = photo.timeZone;
+  } else if (coords && typeof coords.lat === "number" && typeof coords.lng === "number") {
+    targetTz = getTimezoneForCoords(coords.lat, coords.lng);
+  } else if (fallbackTimezone) {
+    targetTz = fallbackTimezone;
+  }
+
+  if (targetTz) {
+    const instantMs =
+      typeof photo.resolvedTime === "number" && !Number.isNaN(photo.resolvedTime)
+        ? photo.resolvedTime
+        : Date.parse(photo.timestamp);
+    if (!Number.isNaN(instantMs)) {
+      const fmt = getCachedDateTimeFormat(locale, targetTz, options);
+      if (fmt) {
+        return fmt.format(new Date(instantMs));
+      }
+    }
+  }
+
+  // 3. Fallback: Parse timestamp directly
+  if (photo.timestamp) {
+    const d = new Date(photo.timestamp);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleString(locale, options);
+    }
+    return photo.timestamp;
+  }
+
+  return "";
 }

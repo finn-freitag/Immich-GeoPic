@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import styles from "./HeaderBar.module.scss";
 import {
   MapPin,
@@ -13,6 +13,7 @@ import {
   XCircle,
   Layers,
   Settings,
+  Check,
 } from "lucide-react";
 
 export type TimespanPreset = "1m" | "3m" | "6m" | "1y" | "all" | "custom";
@@ -60,10 +61,109 @@ export default function HeaderBar({
   onOpenSettings,
 }: HeaderBarProps) {
   const [profileImgError, setProfileImgError] = useState(false);
+  const [localStartDate, setLocalStartDate] = useState(startDate);
+  const [localEndDate, setLocalEndDate] = useState(endDate);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     setProfileImgError(false);
   }, [user?.id, user?.profileImagePath, sessionToken]);
+
+  useEffect(() => {
+    setLocalStartDate(startDate);
+    setLocalEndDate(endDate);
+  }, [startDate, endDate, timespanPreset]);
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, []);
+
+  const isValidDate = (d: string) => {
+    return Boolean(d && /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(d)));
+  };
+
+  const triggerCustomChange = (start: string, end: string, immediate = false) => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+
+    if (!isValidDate(start) || !isValidDate(end)) {
+      return;
+    }
+
+    if (immediate) {
+      onTimespanChange("custom", start, end);
+    } else {
+      debounceTimerRef.current = setTimeout(() => {
+        onTimespanChange("custom", start, end);
+      }, 500);
+    }
+  };
+
+  const handleStartDateChange = (val: string) => {
+    setLocalStartDate(val);
+    if (!isValidDate(val)) return;
+
+    let endVal = localEndDate;
+    if (isValidDate(localEndDate) && val > localEndDate) {
+      endVal = val;
+      setLocalEndDate(val);
+    }
+    if (isValidDate(endVal)) {
+      triggerCustomChange(val, endVal, false);
+    }
+  };
+
+  const handleEndDateChange = (val: string) => {
+    setLocalEndDate(val);
+    if (!isValidDate(val)) return;
+
+    let startVal = localStartDate;
+    if (isValidDate(localStartDate) && val < localStartDate) {
+      startVal = val;
+      setLocalStartDate(val);
+    }
+    if (isValidDate(startVal)) {
+      triggerCustomChange(startVal, val, false);
+    }
+  };
+
+  const handleApply = () => {
+    if (isValidDate(localStartDate) && isValidDate(localEndDate)) {
+      let s = localStartDate;
+      let e = localEndDate;
+      if (s > e) {
+        const tmp = s;
+        s = e;
+        e = tmp;
+        setLocalStartDate(s);
+        setLocalEndDate(e);
+      }
+      triggerCustomChange(s, e, true);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      handleApply();
+    }
+  };
+
+  const handleBlurContainer = (e: React.FocusEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      if (!isValidDate(localStartDate)) {
+        setLocalStartDate(startDate);
+      }
+      if (!isValidDate(localEndDate)) {
+        setLocalEndDate(endDate);
+      }
+    }
+  };
 
   const presets: { id: TimespanPreset; label: string }[] = [
     { id: "1m", label: "1M" },
@@ -73,14 +173,6 @@ export default function HeaderBar({
     { id: "all", label: "All" },
     { id: "custom", label: "Custom" },
   ];
-
-  const handleCustomDateChange = (type: "start" | "end", val: string) => {
-    if (type === "start") {
-      onTimespanChange("custom", val, endDate);
-    } else {
-      onTimespanChange("custom", startDate, val);
-    }
-  };
 
   const userInitial = user?.name ? user.name[0].toUpperCase() : "U";
 
@@ -114,21 +206,37 @@ export default function HeaderBar({
 
         {/* Custom Range Picker */}
         {timespanPreset === "custom" && (
-          <div className={styles.customDateInputs}>
+          <div
+            className={styles.customDateInputs}
+            onBlur={handleBlurContainer}
+            tabIndex={-1}
+          >
             <Calendar size={14} color="var(--text-muted)" />
             <input
               type="date"
               className={styles.dateInput}
-              value={startDate}
-              onChange={(e) => handleCustomDateChange("start", e.target.value)}
+              value={localStartDate}
+              onChange={(e) => handleStartDateChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+              title="Start Date"
             />
             <span className={styles.dateSeparator}>to</span>
             <input
               type="date"
               className={styles.dateInput}
-              value={endDate}
-              onChange={(e) => handleCustomDateChange("end", e.target.value)}
+              value={localEndDate}
+              onChange={(e) => handleEndDateChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+              title="End Date"
             />
+            <button
+              type="button"
+              className={styles.applyDateBtn}
+              onClick={handleApply}
+              title="Apply date range"
+            >
+              <Check size={13} />
+            </button>
           </div>
         )}
 

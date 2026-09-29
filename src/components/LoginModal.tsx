@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import styles from "./LoginModal.module.scss";
-import { MapPin, Mail, Lock, AlertCircle, Loader2 } from "lucide-react";
+import { MapPin, Mail, Lock, Server, AlertCircle, Loader2 } from "lucide-react";
 
 export type LoginModalProps = {
   isOpen: boolean;
@@ -13,10 +13,30 @@ export type LoginModalProps = {
 };
 
 export default function LoginModal({ isOpen, onLoginSuccess }: LoginModalProps) {
+  const [serverUrl, setServerUrl] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("geopic_immich_url");
+      if (saved) {
+        setServerUrl(saved);
+        return;
+      }
+    }
+
+    fetch("/api/auth/login")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.defaultServerUrl) {
+          setServerUrl((prev) => (prev ? prev : data.defaultServerUrl));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   if (!isOpen) return null;
 
@@ -26,15 +46,24 @@ export default function LoginModal({ isOpen, onLoginSuccess }: LoginModalProps) 
     setLoading(true);
 
     try {
+      const cleanServerUrl = serverUrl.trim();
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({
+          email,
+          password,
+          serverUrl: cleanServerUrl || undefined,
+        }),
       });
 
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.error || "Login failed. Check your credentials.");
+      }
+
+      if (cleanServerUrl && typeof window !== "undefined") {
+        localStorage.setItem("geopic_immich_url", cleanServerUrl);
       }
 
       onLoginSuccess(data.user, data.token);
@@ -63,6 +92,24 @@ export default function LoginModal({ isOpen, onLoginSuccess }: LoginModalProps) 
               <span>{error}</span>
             </div>
           )}
+
+          <div className={styles.field}>
+            <label className={styles.label}>Immich Server URL</label>
+            <div className={styles.inputWrapper}>
+              <Server size={16} className={styles.inputIcon} />
+              <input
+                type="text"
+                className={styles.input}
+                placeholder="http://192.168.10.124:2283"
+                value={serverUrl}
+                onChange={(e) => setServerUrl(e.target.value)}
+                disabled={loading}
+              />
+            </div>
+            <span className={styles.helperText}>
+              IP address or domain of your Immich instance (e.g. http://192.168.10.124:2283)
+            </span>
+          </div>
 
           <div className={styles.field}>
             <label className={styles.label}>Immich Email</label>

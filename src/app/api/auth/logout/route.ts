@@ -12,9 +12,9 @@ export async function POST(req: NextRequest) {
   }
 
   if (sessionId) {
-    const immichToken = deleteSession(sessionId);
-    if (immichToken) {
-      await logoutFromImmich(immichToken);
+    const sessionData = deleteSession(sessionId);
+    if (sessionData?.immichToken) {
+      await logoutFromImmich(sessionData.immichToken, sessionData.immichUrl);
     }
   }
 

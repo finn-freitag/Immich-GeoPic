@@ -9,6 +9,7 @@ export type ServerSession = {
   id: string;
   immichToken: string;
   user: ImmichUser;
+  immichUrl?: string;
   createdAt: number;
   expiresAt: number;
 };
@@ -28,7 +29,7 @@ export function isApiKeyMode(): boolean {
   return !!process.env.IMMICH_API_KEY && process.env.IMMICH_API_KEY.trim().length > 0;
 }
 
-export function createSession(immichToken: string, user: ImmichUser): string {
+export function createSession(immichToken: string, user: ImmichUser, immichUrl?: string): string {
   const sessionId = crypto.randomUUID();
   const now = Date.now();
 
@@ -36,6 +37,7 @@ export function createSession(immichToken: string, user: ImmichUser): string {
     id: sessionId,
     immichToken,
     user,
+    immichUrl,
     createdAt: now,
     expiresAt: now + SESSION_TTL_MS,
   });
@@ -55,11 +57,11 @@ export function getSession(sessionId: string): ServerSession | null {
   return session;
 }
 
-export function deleteSession(sessionId: string): string | null {
+export function deleteSession(sessionId: string): { immichToken: string; immichUrl?: string } | null {
   const session = sessionStore.get(sessionId);
   if (session) {
     sessionStore.delete(sessionId);
-    return session.immichToken;
+    return { immichToken: session.immichToken, immichUrl: session.immichUrl };
   }
   return null;
 }
@@ -108,7 +110,7 @@ export async function resolveAuth(req: NextRequest): Promise<AuthContext | null>
   }
 
   return {
-    auth: { token: session.immichToken },
+    auth: { token: session.immichToken, baseUrl: session.immichUrl },
     user: session.user,
     mode: "login",
     sessionId: session.id,

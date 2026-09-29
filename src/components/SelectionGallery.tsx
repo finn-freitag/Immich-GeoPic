@@ -3,6 +3,7 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from "react";
 import styles from "./SelectionGallery.module.scss";
 import { MapDisplayItem } from "./LeafletGeorefMap";
+import { formatPhotoDisplayDate } from "@/lib/timezone";
 import {
   X,
   CheckCircle2,
@@ -303,7 +304,7 @@ export default function SelectionGallery({
                     onSelectPhoto(photo);
                   }
                 }}
-                title={`${photo.name}\n${statusText}\n${new Date(photo.timestamp).toLocaleString()}`}
+                title={`${photo.name}\n${statusText}\n${formatPhotoDisplayDate(photo)}`}
               >
                 {/* Small remove cross in top-left corner */}
                 <button

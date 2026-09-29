@@ -100,6 +100,11 @@
   border: 1px solid var(--surface-border);
   border-radius: var(--radius-md);
   padding: 2px 8px;
+  outline: none;
+
+  &:focus-within {
+    border-color: var(--primary);
+  }
 }
 
 .dateInput {
@@ -116,6 +121,29 @@
 .dateSeparator {
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.applyDateBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary);
+  color: #ffffff;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 3px 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1;
+
+  &:hover {
+    background: var(--primary-hover);
+    transform: scale(1.05);
+  }
+
+  &:active {
+    transform: scale(0.95);
+  }
 }
 
 .counters {

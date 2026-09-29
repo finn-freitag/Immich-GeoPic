@@ -19,7 +19,7 @@ import {
 } from "react-leaflet";
 import { ImageItem } from "@/types/ImageItem";
 import { GpxPoint, GpxTrackMetadata, GpxTrackWithPoints } from "@/types/GpxTrack";
-import { getTimezoneForCoords, resolvePhotoTimeMs } from "@/lib/timezone";
+import { getTimezoneForCoords, resolvePhotoTimeMs, formatPhotoDisplayDate } from "@/lib/timezone";
 import L from "leaflet";
 import {
   X,
@@ -1815,11 +1815,39 @@ export default function LeafletGeorefMap(props: Props) {
     if (!isRelocating || !selectedImage) return;
 
     const { lat, lng } = e.latlng;
+    const targetImageId = selectedImage.id;
     setIsRelocating(false);
-    setIsUpdating(true);
 
+    // Save previous state for rollback on error
+    const previousImages = images;
+    const previousSelected = selectedImage;
+
+    // 1. Optimistically update marker and inspector immediately
+    const updated = images.map((img) => {
+      if (img.id === targetImageId) {
+        const { estimated, estCoords, ...clean } = img as MapDisplayItem;
+        return { ...clean, coords: { lat, lng }, isCleared: false };
+      }
+      return img;
+    });
+    updateImages(updated);
+
+    setSelectedImage((prev) => {
+      if (!prev || prev.id !== targetImageId) return prev;
+      const { estimated, estCoords, ...clean } = prev;
+      return {
+        ...clean,
+        coords: { lat, lng },
+        isCleared: false,
+        city: undefined,
+        country: undefined,
+      };
+    });
+
+    // 2. Persist in background
+    setIsUpdating(true);
     try {
-      const res = await fetch(`/api/images/${selectedImage.id}/location`, {
+      const res = await fetch(`/api/images/${targetImageId}/location`, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({ coords: { lat, lng } }),
@@ -1827,17 +1855,10 @@ export default function LeafletGeorefMap(props: Props) {
       if (!res.ok) {
         throw new Error(`Failed to relocate marker: ${res.status}`);
       }
-
-      const updated = images.map((img) => {
-        if (img.id === selectedImage.id) {
-          const { estimated, estCoords, ...clean } = img as MapDisplayItem;
-          return { ...clean, coords: { lat, lng }, isCleared: false };
-        }
-        return img;
-      });
-      updateImages(updated);
     } catch (err) {
       console.error("Failed to relocate marker:", err);
+      updateImages(previousImages);
+      setSelectedImage(previousSelected);
     } finally {
       setIsUpdating(false);
     }
@@ -1847,10 +1868,29 @@ export default function LeafletGeorefMap(props: Props) {
   const handleFixSingleMarker = async () => {
     if (!selectedImage?.estCoords) return;
 
+    const targetId = selectedImage.id;
+    const coords = selectedImage.estCoords;
+    const previousImages = images;
+    const previousSelected = selectedImage;
+
+    // Optimistically update
+    const updated = images.map((img) => {
+      if (img.id === targetId) {
+        const { estimated, estCoords, ...clean } = img as MapDisplayItem;
+        return { ...clean, coords, isCleared: false };
+      }
+      return img;
+    });
+    updateImages(updated);
+    setSelectedImage((prev) =>
+      prev && prev.id === targetId
+        ? { ...prev, coords, estimated: false, estCoords: undefined, isCleared: false }
+        : prev
+    );
+
     setIsUpdating(true);
     try {
-      const coords = selectedImage.estCoords;
-      const res = await fetch(`/api/images/${selectedImage.id}/location`, {
+      const res = await fetch(`/api/images/${targetId}/location`, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({ coords }),
@@ -1858,17 +1898,10 @@ export default function LeafletGeorefMap(props: Props) {
       if (!res.ok) {
         throw new Error(`Failed to fix marker: ${res.status}`);
       }
-
-      const updated = images.map((img) => {
-        if (img.id === selectedImage.id) {
-          const { estimated, estCoords, ...clean } = img as MapDisplayItem;
-          return { ...clean, coords, isCleared: false };
-        }
-        return img;
-      });
-      updateImages(updated);
     } catch (err) {
       console.error("Failed to fix marker:", err);
+      updateImages(previousImages);
+      setSelectedImage(previousSelected);
     } finally {
       setIsUpdating(false);
     }
@@ -1878,9 +1911,43 @@ export default function LeafletGeorefMap(props: Props) {
   const handleRemoveCoordinates = async () => {
     if (!selectedImage) return;
 
+    const targetId = selectedImage.id;
+    const previousImages = images;
+    const previousSelected = selectedImage;
+
+    // Optimistically remove
+    const updated = images.map((img) => {
+      if (img.id === targetId) {
+        const { estimated, estCoords, ...clean } = img as MapDisplayItem;
+        return {
+          ...clean,
+          coords: undefined,
+          city: undefined,
+          country: undefined,
+          isCleared: true,
+          hasImmichCoords: true,
+        };
+      }
+      return img;
+    });
+    updateImages(updated);
+    setSelectedImage((prev) => {
+      if (!prev || prev.id !== targetId) return prev;
+      const { estimated, estCoords, ...clean } = prev;
+      return {
+        ...clean,
+        coords: undefined,
+        city: undefined,
+        country: undefined,
+        estimated: true,
+        isCleared: true,
+        hasImmichCoords: true,
+      };
+    });
+
     setIsUpdating(true);
     try {
-      const res = await fetch(`/api/images/${selectedImage.id}/location`, {
+      const res = await fetch(`/api/images/${targetId}/location`, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({ coords: null }),
@@ -1888,37 +1955,10 @@ export default function LeafletGeorefMap(props: Props) {
       if (!res.ok) {
         throw new Error(`Failed to remove coordinates: ${res.status}`);
       }
-
-      const updated = images.map((img) => {
-        if (img.id === selectedImage.id) {
-          const { estimated, estCoords, ...clean } = img as MapDisplayItem;
-          return {
-            ...clean,
-            coords: undefined,
-            city: undefined,
-            country: undefined,
-            isCleared: true,
-            hasImmichCoords: true,
-          };
-        }
-        return img;
-      });
-      updateImages(updated);
-      setSelectedImage((prev) => {
-        if (!prev || prev.id !== selectedImage.id) return prev;
-        const { estimated, estCoords, ...clean } = prev;
-        return {
-          ...clean,
-          coords: undefined,
-          city: undefined,
-          country: undefined,
-          estimated: true,
-          isCleared: true,
-          hasImmichCoords: true,
-        };
-      });
     } catch (err) {
       console.error("Failed to remove coordinates:", err);
+      updateImages(previousImages);
+      setSelectedImage(previousSelected);
     } finally {
       setIsUpdating(false);
     }
@@ -1928,13 +1968,31 @@ export default function LeafletGeorefMap(props: Props) {
   const handleFixBatchMarkers = async () => {
     if (estimatedInBounds.length === 0) return;
 
+    const previousImages = images;
+    const previousBounds = bounds;
+    const previousSelectedIds = selectedPhotoIds;
+
+    const updates = estimatedInBounds.map((img) => ({
+      id: img.id,
+      coords: img.estCoords!,
+    }));
+
+    const updatedMap = new Map(updates.map((u) => [u.id, u.coords]));
+    const updated = images.map((img) => {
+      const newCoords = updatedMap.get(img.id);
+      if (newCoords) {
+        const { estimated, estCoords, ...clean } = img as MapDisplayItem;
+        return { ...clean, coords: newCoords, isCleared: false };
+      }
+      return img;
+    });
+
+    updateImages(updated);
+    setBounds(null);
+    setSelectedPhotoIds(null);
+
     setIsUpdating(true);
     try {
-      const updates = estimatedInBounds.map((img) => ({
-        id: img.id,
-        coords: img.estCoords!,
-      }));
-
       const res = await fetch("/api/images/bulk-location", {
         method: "POST",
         headers: getAuthHeaders(),
@@ -1943,22 +2001,11 @@ export default function LeafletGeorefMap(props: Props) {
       if (!res.ok) {
         throw new Error(`Failed to bulk fix markers: ${res.status}`);
       }
-
-      const updatedMap = new Map(updates.map((u) => [u.id, u.coords]));
-      const updated = images.map((img) => {
-        const newCoords = updatedMap.get(img.id);
-        if (newCoords) {
-          const { estimated, estCoords, ...clean } = img as MapDisplayItem;
-          return { ...clean, coords: newCoords, isCleared: false };
-        }
-        return img;
-      });
-
-      updateImages(updated);
-      setBounds(null);
-      setSelectedPhotoIds(null);
     } catch (err) {
       console.error("Failed to bulk fix markers:", err);
+      updateImages(previousImages);
+      setBounds(previousBounds);
+      setSelectedPhotoIds(previousSelectedIds);
     } finally {
       setIsUpdating(false);
     }
@@ -1968,9 +2015,34 @@ export default function LeafletGeorefMap(props: Props) {
   const handleRemoveBatchCoordinates = async () => {
     if (verifiedSelected.length === 0) return;
 
+    const previousImages = images;
+    const previousBounds = bounds;
+    const previousSelectedIds = selectedPhotoIds;
+
+    const deleteIds = verifiedSelected.map((img) => img.id);
+    const removeSet = new Set(deleteIds);
+    const updated = images.map((img) => {
+      if (removeSet.has(img.id)) {
+        const { estimated, estCoords, ...clean } = img as MapDisplayItem;
+        return {
+          ...clean,
+          coords: undefined,
+          city: undefined,
+          country: undefined,
+          estimated: true,
+          isCleared: true,
+          hasImmichCoords: true,
+        };
+      }
+      return img;
+    });
+
+    updateImages(updated);
+    setBounds(null);
+    setSelectedPhotoIds(null);
+
     setIsUpdating(true);
     try {
-      const deleteIds = verifiedSelected.map((img) => img.id);
       const res = await fetch("/api/images/bulk-location", {
         method: "POST",
         headers: getAuthHeaders(),
@@ -1979,29 +2051,11 @@ export default function LeafletGeorefMap(props: Props) {
       if (!res.ok) {
         throw new Error(`Failed to remove coordinates: ${res.status}`);
       }
-
-      const removeSet = new Set(deleteIds);
-      const updated = images.map((img) => {
-        if (removeSet.has(img.id)) {
-          const { estimated, estCoords, ...clean } = img as MapDisplayItem;
-          return {
-            ...clean,
-            coords: undefined,
-            city: undefined,
-            country: undefined,
-            estimated: true,
-            isCleared: true,
-            hasImmichCoords: true,
-          };
-        }
-        return img;
-      });
-
-      updateImages(updated);
-      setBounds(null);
-      setSelectedPhotoIds(null);
     } catch (err) {
       console.error("Failed to bulk remove coordinates:", err);
+      updateImages(previousImages);
+      setBounds(previousBounds);
+      setSelectedPhotoIds(previousSelectedIds);
     } finally {
       setIsUpdating(false);
     }
@@ -2011,13 +2065,36 @@ export default function LeafletGeorefMap(props: Props) {
   const handleBatchMoveToPoint = async (lat: number, lng: number) => {
     if (selectedItems.length === 0) return;
 
+    const previousImages = images;
+    const previousBounds = bounds;
+
+    const updates = selectedItems.map((img) => ({
+      id: img.id,
+      coords: { lat, lng },
+    }));
+
+    const updatedMap = new Map(updates.map((u) => [u.id, u.coords]));
+    const updated = images.map((img) => {
+      const newCoords = updatedMap.get(img.id);
+      if (newCoords) {
+        const { estimated, estCoords, ...clean } = img as MapDisplayItem;
+        return { ...clean, coords: newCoords, isCleared: false };
+      }
+      return img;
+    });
+
+    updateImages(updated);
+
+    // Preserve selection tightly around the new destination
+    const delta = 0.0005;
+    const newBounds = L.latLngBounds(
+      [lat - delta, lng - delta],
+      [lat + delta, lng + delta]
+    );
+    setBounds(newBounds);
+
     setIsUpdating(true);
     try {
-      const updates = selectedItems.map((img) => ({
-        id: img.id,
-        coords: { lat, lng },
-      }));
-
       const res = await fetch("/api/images/bulk-location", {
         method: "POST",
         headers: getAuthHeaders(),
@@ -2026,28 +2103,10 @@ export default function LeafletGeorefMap(props: Props) {
       if (!res.ok) {
         throw new Error(`Failed to move markers to point: ${res.status}`);
       }
-
-      const updatedMap = new Map(updates.map((u) => [u.id, u.coords]));
-      const updated = images.map((img) => {
-        const newCoords = updatedMap.get(img.id);
-        if (newCoords) {
-          const { estimated, estCoords, ...clean } = img as MapDisplayItem;
-          return { ...clean, coords: newCoords, isCleared: false };
-        }
-        return img;
-      });
-
-      updateImages(updated);
-
-      // Preserve selection tightly around the new destination
-      const delta = 0.0005;
-      const newBounds = L.latLngBounds(
-        [lat - delta, lng - delta],
-        [lat + delta, lng + delta]
-      );
-      setBounds(newBounds);
     } catch (err) {
       console.error("Failed to move markers to point:", err);
+      updateImages(previousImages);
+      setBounds(previousBounds);
     } finally {
       setIsUpdating(false);
     }
@@ -2060,19 +2119,43 @@ export default function LeafletGeorefMap(props: Props) {
     const dLat = targetLat - selectionAnchor.center.lat;
     const dLng = targetLng - selectionAnchor.center.lng;
 
+    const previousImages = images;
+    const previousBounds = bounds;
+
+    const updates = selectedItems.map((img) => {
+      const c = getItemCoords(img)!;
+      return {
+        id: img.id,
+        coords: {
+          lat: c.lat + dLat,
+          lng: c.lng + dLng,
+        },
+      };
+    });
+
+    const updatedMap = new Map(updates.map((u) => [u.id, u.coords]));
+    const updated = images.map((img) => {
+      const newCoords = updatedMap.get(img.id);
+      if (newCoords) {
+        const { estimated, estCoords, ...clean } = img as MapDisplayItem;
+        return { ...clean, coords: newCoords, isCleared: false };
+      }
+      return img;
+    });
+
+    updateImages(updated);
+
+    // Shift bounds to the new location to keep markers selected
+    if (bounds) {
+      const newBounds = L.latLngBounds(
+        [bounds.getSouth() + dLat, bounds.getWest() + dLng],
+        [bounds.getNorth() + dLat, bounds.getEast() + dLng]
+      );
+      setBounds(newBounds);
+    }
+
     setIsUpdating(true);
     try {
-      const updates = selectedItems.map((img) => {
-        const c = getItemCoords(img)!;
-        return {
-          id: img.id,
-          coords: {
-            lat: c.lat + dLat,
-            lng: c.lng + dLng,
-          },
-        };
-      });
-
       const res = await fetch("/api/images/bulk-location", {
         method: "POST",
         headers: getAuthHeaders(),
@@ -2081,29 +2164,10 @@ export default function LeafletGeorefMap(props: Props) {
       if (!res.ok) {
         throw new Error(`Failed to move selection: ${res.status}`);
       }
-
-      const updatedMap = new Map(updates.map((u) => [u.id, u.coords]));
-      const updated = images.map((img) => {
-        const newCoords = updatedMap.get(img.id);
-        if (newCoords) {
-          const { estimated, estCoords, ...clean } = img as MapDisplayItem;
-          return { ...clean, coords: newCoords, isCleared: false };
-        }
-        return img;
-      });
-
-      updateImages(updated);
-
-      // Shift bounds to the new location to keep markers selected
-      if (bounds) {
-        const newBounds = L.latLngBounds(
-          [bounds.getSouth() + dLat, bounds.getWest() + dLng],
-          [bounds.getNorth() + dLat, bounds.getEast() + dLng]
-        );
-        setBounds(newBounds);
-      }
     } catch (err) {
       console.error("Failed to move selection:", err);
+      updateImages(previousImages);
+      setBounds(previousBounds);
     } finally {
       setIsUpdating(false);
     }
@@ -2947,10 +3011,14 @@ export default function LeafletGeorefMap(props: Props) {
             <div className={styles.metaRow}>
               <Calendar size={14} />
               <span className={styles.metaValue}>
-                {new Date(selectedImage.timestamp).toLocaleString(undefined, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                })}
+                {formatPhotoDisplayDate(
+                  selectedImage,
+                  {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  },
+                  appSettings.fallbackTimezone
+                )}
               </span>
               <button
                 type="button"
@@ -3185,10 +3253,14 @@ export default function LeafletGeorefMap(props: Props) {
               <div className={styles.lightboxTitle}>
                 <span className={styles.lightboxName}>{selectedImage.name}</span>
                 <span className={styles.lightboxDate}>
-                  {new Date(selectedImage.timestamp).toLocaleString(undefined, {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })}
+                  {formatPhotoDisplayDate(
+                    selectedImage,
+                    {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    },
+                    appSettings.fallbackTimezone
+                  )}
                 </span>
               </div>
               <button

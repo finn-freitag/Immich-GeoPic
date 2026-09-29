@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import styles from "./page.module.scss";
 import HeaderBar, { TimespanPreset } from "@/components/HeaderBar";
@@ -28,8 +28,13 @@ export default function Home() {
     timestamp: number;
   } | null>(null);
 
-  // Format dates as YYYY-MM-DD
-  const formatDateInput = (date: Date) => date.toISOString().split("T")[0];
+  // Format dates as local YYYY-MM-DD
+  const formatDateInput = (date: Date) => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  };
 
   const defaultDates = useMemo(() => {
     const end = new Date();
@@ -43,6 +48,7 @@ export default function Home() {
 
   const [startDate, setStartDate] = useState(defaultDates.startDate);
   const [endDate, setEndDate] = useState(defaultDates.endDate);
+  const latestRequestIdRef = useRef(0);
 
   // Authenticated fetch helper that sends Bearer token & handles credentials
   const authFetch = useCallback(
@@ -118,14 +124,15 @@ export default function Home() {
   // Fetch photos for the selected date range
   const loadImages = useCallback(
     async (start?: string, end?: string, isAll?: boolean) => {
+      const currentRequestId = ++latestRequestIdRef.current;
       setIsLoading(true);
       try {
         const query = new URLSearchParams();
         if (isAll) {
           query.set("all", "true");
         } else {
-          if (start) query.set("startDate", start);
-          if (end) query.set("endDate", end);
+          if (start && start.trim()) query.set("startDate", start.trim());
+          if (end && end.trim()) query.set("endDate", end.trim());
         }
 
         const res = await authFetch(`/api/images?${query.toString()}`);
@@ -143,11 +150,19 @@ export default function Home() {
         }
 
         const data = await res.json();
+        // If a newer request was dispatched, discard stale response
+        if (currentRequestId !== latestRequestIdRef.current) {
+          return;
+        }
         setImages(data.images || []);
       } catch (err) {
-        console.error("Failed to load images from Immich:", err);
+        if (currentRequestId === latestRequestIdRef.current) {
+          console.error("Failed to load images from Immich:", err);
+        }
       } finally {
-        setIsLoading(false);
+        if (currentRequestId === latestRequestIdRef.current) {
+          setIsLoading(false);
+        }
       }
     },
     [authFetch]
@@ -205,11 +220,22 @@ export default function Home() {
       setEndDate("");
       loadImages("", "", true);
     } else if (preset === "custom") {
-      const startStr = customStart ?? (startDate || defaultDates.startDate);
-      const endStr = customEnd ?? (endDate || defaultDates.endDate);
-      setStartDate(startStr);
-      setEndDate(endStr);
-      loadImages(startStr, endStr, false);
+      const validStart =
+        customStart && customStart.trim() !== ""
+          ? customStart.trim()
+          : startDate || defaultDates.startDate;
+      const validEnd =
+        customEnd && customEnd.trim() !== ""
+          ? customEnd.trim()
+          : endDate || defaultDates.endDate;
+
+      const hasDatesChanged = validStart !== startDate || validEnd !== endDate;
+      setStartDate(validStart);
+      setEndDate(validEnd);
+
+      if (hasDatesChanged || images.length === 0) {
+        loadImages(validStart, validEnd, false);
+      }
     }
   };
 

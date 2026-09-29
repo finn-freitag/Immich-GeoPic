@@ -34,7 +34,19 @@ export interface TimestampModalProps {
 /**
  * Formats a Date/timestamp into HTML datetime-local format: YYYY-MM-DDTHH:mm:ss
  */
-function toDateTimeLocalValue(val: Date | number | string): string {
+function toDateTimeLocalValue(val: Date | number | string, localStr?: string | null): string {
+  if (localStr && typeof localStr === "string") {
+    const match = localStr.trim().match(/^(\d{4})[-:/](\d{2})[-:/](\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+    if (match) {
+      return `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}`;
+    }
+  }
+  if (typeof val === "string") {
+    const match = val.trim().match(/^(\d{4})[-:/](\d{2})[-:/](\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+    if (match && !val.includes("Z") && !/[+-]\d{2}:?\d{2}$/.test(val)) {
+      return `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}`;
+    }
+  }
   const d = typeof val === "object" ? val : new Date(val);
   if (Number.isNaN(d.getTime())) return "";
   const pad = (n: number) => n.toString().padStart(2, "0");
@@ -50,7 +62,30 @@ function toDateTimeLocalValue(val: Date | number | string): string {
 /**
  * Formats a timestamp into human readable localized date and time
  */
-function formatHumanDateTime(val: Date | number | string): string {
+function formatHumanDateTime(val: Date | number | string, localStr?: string | null): string {
+  if (localStr && typeof localStr === "string") {
+    const match = localStr.trim().match(/^(\d{4})[-:/](\d{2})[-:/](\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+    if (match) {
+      const d = new Date(
+        parseInt(match[1], 10),
+        parseInt(match[2], 10) - 1,
+        parseInt(match[3], 10),
+        parseInt(match[4], 10),
+        parseInt(match[5], 10),
+        parseInt(match[6], 10)
+      );
+      if (!Number.isNaN(d.getTime())) {
+        return d.toLocaleString(undefined, {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+      }
+    }
+  }
   const d = typeof val === "object" ? val : new Date(val);
   if (Number.isNaN(d.getTime())) return "Invalid date";
   return d.toLocaleString(undefined, {
@@ -143,7 +178,7 @@ export default function TimestampModal({
       const firstPhoto = photos[0];
       setReferencePhotoId(firstPhoto.id);
 
-      const firstPhotoLocalStr = toDateTimeLocalValue(firstPhoto.timestamp);
+      const firstPhotoLocalStr = toDateTimeLocalValue(firstPhoto.timestamp, firstPhoto.localDateTime);
       setRefTargetDateTimeStr(firstPhotoLocalStr);
       setExactDateTimeStr(firstPhotoLocalStr);
 
@@ -165,7 +200,7 @@ export default function TimestampModal({
     setReferencePhotoId(newId);
     const target = photos.find((p) => p.id === newId);
     if (target) {
-      setRefTargetDateTimeStr(toDateTimeLocalValue(target.timestamp));
+      setRefTargetDateTimeStr(toDateTimeLocalValue(target.timestamp, target.localDateTime));
     }
   };
 
@@ -270,6 +305,7 @@ export default function TimestampModal({
         id: p.id,
         name: p.name,
         oldTimestamp: p.timestamp,
+        oldLocalDateTime: p.localDateTime,
         newTimestamp,
         diffMs: effectiveOffsetMs,
         isReference: p.id === referencePhotoId,
@@ -599,7 +635,7 @@ export default function TimestampModal({
                   >
                     {photos.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.name} ({formatHumanDateTime(p.timestamp)})
+                         {p.name} ({formatHumanDateTime(p.timestamp, p.localDateTime)})
                       </option>
                     ))}
                   </select>
@@ -611,7 +647,7 @@ export default function TimestampModal({
                 <div className={styles.calcBox}>
                   <span className={styles.calcBoxLabel}>Original Timestamp</span>
                   <span className={styles.calcBoxValue}>
-                    {referencePhoto ? formatHumanDateTime(referencePhoto.timestamp) : "—"}
+                    {referencePhoto ? formatHumanDateTime(referencePhoto.timestamp, referencePhoto.localDateTime) : "—"}
                   </span>
                 </div>
 
@@ -686,7 +722,7 @@ export default function TimestampModal({
                     type="button"
                     className={styles.chipBtn}
                     onClick={() =>
-                      setExactDateTimeStr(toDateTimeLocalValue(photos[0].timestamp))
+                      setExactDateTimeStr(toDateTimeLocalValue(photos[0].timestamp, photos[0].localDateTime))
                     }
                   >
                     Reset to First Photo&apos;s Time
@@ -736,7 +772,7 @@ export default function TimestampModal({
                     {item.name}
                   </span>
                   <span className={styles.previewOld}>
-                    {formatHumanDateTime(item.oldTimestamp)}
+                    {formatHumanDateTime(item.oldTimestamp, item.oldLocalDateTime)}
                   </span>
                   <span className={styles.previewArrow}>
                     <ArrowRight size={12} />

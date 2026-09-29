@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loginToImmich } from "@/lib/immich";
+import { getImmichUrl, loginToImmich } from "@/lib/immich";
 import { attachSessionCookie, createSession, isApiKeyMode } from "@/lib/session";
+
+export async function GET() {
+  return NextResponse.json({
+    defaultServerUrl: getImmichUrl(),
+    isApiKeyMode: isApiKeyMode(),
+  });
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -12,7 +19,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { email, password } = body;
+    const { email, password, serverUrl } = body;
 
     if (!email || !password) {
       return NextResponse.json(
@@ -21,15 +28,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { accessToken, user } = await loginToImmich(email, password);
-    const sessionId = createSession(accessToken, user);
+    const { accessToken, user, immichUrl } = await loginToImmich(email, password, serverUrl);
+    const sessionId = createSession(accessToken, user, immichUrl);
 
-    console.log(`[GeoPic Auth] Login successful for user: ${user.email} (session: ${sessionId.substring(0, 8)}...)`);
+    console.log(
+      `[GeoPic Auth] Login successful for user: ${user.email} (session: ${sessionId.substring(0, 8)}..., url: ${immichUrl})`
+    );
 
     const res = NextResponse.json({
       success: true,
       user,
       token: sessionId,
+      immichUrl,
     });
 
     attachSessionCookie(req, res, sessionId);

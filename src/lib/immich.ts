@@ -1,6 +1,7 @@
 export type ImmichAuth = {
   token?: string;
   apiKey?: string;
+  baseUrl?: string;
 };
 
 export type ImmichUser = {
@@ -29,8 +30,8 @@ export type ImmichAsset = {
   } | null;
 };
 
-export function getImmichUrl(): string {
-  let url = process.env.IMMICH_URL || "http://localhost:2283";
+export function getImmichUrl(customUrl?: string): string {
+  let url = customUrl || process.env.IMMICH_URL || "http://localhost:2283";
   url = url.trim().replace(/\/+$/, "");
   if (url.endsWith("/api")) {
     url = url.slice(0, -4).replace(/\/+$/, "");
@@ -53,11 +54,16 @@ export function getAuthHeaders(auth: ImmichAuth): Record<string, string> {
   return headers;
 }
 
-export async function loginToImmich(email: string, password: string): Promise<{
+export async function loginToImmich(
+  email: string,
+  password: string,
+  serverUrl?: string
+): Promise<{
   accessToken: string;
   user: ImmichUser;
+  immichUrl: string;
 }> {
-  const baseUrl = getImmichUrl();
+  const baseUrl = getImmichUrl(serverUrl);
   let res: Response;
   const targetUrl = `${baseUrl}/api/auth/login`;
 
@@ -111,12 +117,13 @@ export async function loginToImmich(email: string, password: string): Promise<{
       profileImagePath: data.profileImagePath,
       isAdmin: !!data.isAdmin,
     },
+    immichUrl: baseUrl,
   };
 }
 
-export async function logoutFromImmich(token: string): Promise<void> {
+export async function logoutFromImmich(token: string, serverUrl?: string): Promise<void> {
   try {
-    const baseUrl = getImmichUrl();
+    const baseUrl = getImmichUrl(serverUrl);
     await fetch(`${baseUrl}/api/auth/logout`, {
       method: "POST",
       headers: {
@@ -129,7 +136,7 @@ export async function logoutFromImmich(token: string): Promise<void> {
 }
 
 export async function getCurrentUser(auth: ImmichAuth): Promise<ImmichUser> {
-  const baseUrl = getImmichUrl();
+  const baseUrl = getImmichUrl(auth.baseUrl);
   const res = await fetch(`${baseUrl}/api/users/me`, {
     headers: getAuthHeaders(auth),
   });
@@ -155,7 +162,7 @@ export async function getProfileImageStream(
   body: ReadableStream<Uint8Array> | null;
   contentType: string;
 } | null> {
-  const baseUrl = getImmichUrl();
+  const baseUrl = getImmichUrl(auth.baseUrl);
 
   let targetUserId = userId;
   if (!targetUserId || targetUserId === "apikey-user") {
@@ -215,7 +222,7 @@ export async function searchAssets(
     size?: number;
   }
 ): Promise<{ items: ImmichAsset[]; total: number }> {
-  const baseUrl = getImmichUrl();
+  const baseUrl = getImmichUrl(auth.baseUrl);
   const pageSize = Math.min(params.size || 1000, 1000);
   const bodyPayload: Record<string, unknown> = {
     type: "IMAGE",
@@ -224,17 +231,27 @@ export async function searchAssets(
     page: params.page || 1,
   };
 
-  if (params.startDate) {
-    const isoString = params.startDate.includes("T")
-      ? new Date(params.startDate).toISOString()
-      : new Date(`${params.startDate}T00:00:00.000Z`).toISOString();
-    bodyPayload.takenAfter = isoString;
+  if (params.startDate && params.startDate.trim() !== "") {
+    const raw = params.startDate.includes("T") ? params.startDate.split("T")[0] : params.startDate.trim();
+    const startDateObj = new Date(`${raw}T00:00:00.000Z`);
+    if (!Number.isNaN(startDateObj.getTime())) {
+      // Buffer 24h earlier in UTC to capture photos taken across timezones (up to UTC+14)
+      startDateObj.setDate(startDateObj.getDate() - 1);
+      bodyPayload.takenAfter = startDateObj.toISOString();
+    } else {
+      bodyPayload.takenAfter = new Date(params.startDate).toISOString();
+    }
   }
-  if (params.endDate) {
-    const isoString = params.endDate.includes("T")
-      ? new Date(params.endDate).toISOString()
-      : new Date(`${params.endDate}T23:59:59.999Z`).toISOString();
-    bodyPayload.takenBefore = isoString;
+  if (params.endDate && params.endDate.trim() !== "") {
+    const raw = params.endDate.includes("T") ? params.endDate.split("T")[0] : params.endDate.trim();
+    const endDateObj = new Date(`${raw}T23:59:59.999Z`);
+    if (!Number.isNaN(endDateObj.getTime())) {
+      // Buffer 24h later in UTC to capture photos taken across timezones (down to UTC-12)
+      endDateObj.setDate(endDateObj.getDate() + 1);
+      bodyPayload.takenBefore = endDateObj.toISOString();
+    } else {
+      bodyPayload.takenBefore = new Date(params.endDate).toISOString();
+    }
   }
 
   const res = await fetch(`${baseUrl}/api/search/metadata`, {
@@ -338,7 +355,7 @@ export async function getAssetThumbnailStream(
   body: ReadableStream<Uint8Array> | null;
   contentType: string;
 } | null> {
-  const baseUrl = getImmichUrl();
+  const baseUrl = getImmichUrl(auth.baseUrl);
   const res = await fetch(`${baseUrl}/api/assets/${assetId}/thumbnail?size=${size}`, {
     headers: getAuthHeaders(auth),
   });
@@ -364,11 +381,26 @@ export async function updateAssetLocation(
     return;
   }
 
-  const baseUrl = getImmichUrl();
+  const baseUrl = getImmichUrl(auth.baseUrl);
   const latitude = coords.lat;
   const longitude = coords.lng;
 
-  // Try bulk update endpoint PUT /api/assets first
+  // Direct single asset endpoint PUT /api/assets/:id is primary in Immich
+  const singleRes = await fetch(`${baseUrl}/api/assets/${assetId}`, {
+    method: "PUT",
+    headers: {
+      ...getAuthHeaders(auth),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      latitude,
+      longitude,
+    }),
+  });
+
+  if (singleRes.ok) return;
+
+  // Fallback to bulk update endpoint PUT /api/assets if needed
   const bulkRes = await fetch(`${baseUrl}/api/assets`, {
     method: "PUT",
     headers: {
@@ -382,22 +414,7 @@ export async function updateAssetLocation(
     }),
   });
 
-  if (bulkRes.ok) return;
-
-  // Fallback to single asset endpoint PUT /api/assets/:id
-  const singleRes = await fetch(`${baseUrl}/api/assets/${assetId}`, {
-    method: "PUT",
-    headers: {
-      ...getAuthHeaders(auth),
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      latitude,
-      longitude,
-    }),
-  });
-
-  if (!singleRes.ok) {
+  if (!bulkRes.ok) {
     const errorText = await singleRes.text();
     throw new Error(`Failed to update asset location (${singleRes.status}): ${errorText}`);
   }
@@ -435,7 +452,7 @@ export async function updateAssetDateTime(
   assetId: string,
   dateTimeOriginal: string
 ): Promise<void> {
-  const baseUrl = getImmichUrl();
+  const baseUrl = getImmichUrl(auth.baseUrl);
 
   // Try bulk update endpoint PUT /api/assets first
   const bulkRes = await fetch(`${baseUrl}/api/assets`, {
@@ -484,7 +501,7 @@ export async function bulkUpdateDateTimes(
 
   if (allSameTime) {
     try {
-      const baseUrl = getImmichUrl();
+      const baseUrl = getImmichUrl(auth.baseUrl);
       const bulkRes = await fetch(`${baseUrl}/api/assets`, {
         method: "PUT",
         headers: {
